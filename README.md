@@ -1,78 +1,86 @@
-# AI4ALL — Nutrition5k (personal workspace)
+# AI4ALL — Nutrition5k (my work)
 
-Personal experiment space for my AI4ALL group project: estimating nutritional content from food
-photographs.
+My personal workspace for the AI4ALL Nutrition5k project: model experiments, EDA, and the
+evaluation artifacts I'm responsible for.
 
-> ## ⚠️ This is NOT the graded repo
->
-> The team's repo is **https://github.com/MalikSCole/AI4all-Group-Project**. That is where work
-> gets graded and where contributions are counted.
->
-> The Week 8 notes flag **"Contributor only Malik?"** — the instructor has noticed that commit
-> history shows one contributor. Work done here is invisible to that. **Push model work to the
-> group repo.** Use this repo for scratch experiments you don't want to inflict on teammates —
-> nothing else.
->
-> Instructor `yzhao2433` should be a collaborator on the group repo, and the Week 3 notes ask for
-> regular commits — the cadence is part of what's being assessed, not just the final artifact.
+> **The team's graded repo is [MalikSCole/AI4all-Group-Project](https://github.com/MalikSCole/AI4all-Group-Project).**
+> This repo is where I develop and keep my own experiments. Work that counts toward the project
+> still needs to land there — the Week 8 notes flag **"Contributor only Malik?"**, so commits with
+> my name on them in the group repo are what answer that. Develop here, push what lands to the
+> group repo, and keep the cadence visible (Week 3 notes ask for regular commits, with
+> `yzhao2433` added as a collaborator).
 
 ## The project
 
 Team: Malik, Kai, Shyam, Chidera. Dataset:
-[Nutrition5k](https://www.kaggle.com/datasets/gillesokhin/nutrition5k-dataset/data)
-(Google Research) — food images with nutritional annotations.
+[Nutrition5k](https://www.kaggle.com/datasets/gillesokhin/nutrition5k-dataset/data) (Google
+Research) — food images with nutritional annotations.
 
-Current results from the group's work: a 224×224 CNN reached **66.9%** test accuracy vs **65.9%**
-at 128×128. Higher resolution helped, but modestly — which is itself a finding. It suggests
-resolution wasn't the binding constraint, so pushing it further is likely a dead end. The
-headroom is probably in one of: augmentation, architecture, or the depth modality.
+Where the team is: a 224×224 CNN reached **66.9%** test accuracy vs **65.9%** at 128×128. The gain
+from doubling resolution was small, which is itself informative — it suggests resolution wasn't
+the binding constraint, so pushing it further is likely a dead end. Headroom is more plausibly in
+augmentation, architecture, or the depth modality.
 
 ## Timeline
 
 | When | What | Status |
 |---|---|---|
-| Week 8 (Jul 8) | Model comparison table, address data leakage | ← last check-in |
-| **Week 9 (now)** | Per-person model experiments + 1-slide comparison table | **in progress** |
-| **Week 10** | **Streamlit deployment — due *before* the class session** | not started |
-| Week 12 | Final in-class presentation; project complete | — |
+| Week 8 (Jul 8) | Model comparison table; address leakage | last check-in |
+| **Week 9 (now)** | My model experiments + 1-slide comparison table | **in progress** |
+| **Week 10** | **Streamlit deployment — due *before* the session** | not started |
+| Week 12 | Final in-class presentation | — |
 
-## Open technical concerns (from Week 8)
+## My experiments
 
-**Data leakage — the one that actually matters.** The concern raised was using a validation set
-for both model refinement *and* model selection. If you tune against validation and then select
-against the same set, the validation score stops being an estimate of generalization and starts
-being a number you optimized directly. The reported 66.9% may be optimistic for this reason.
+Week 8 asked each member to train models and report train/validation performance in a shared
+table. Log every run here — including the ones that fail. A run that didn't help is evidence,
+and "we tried X and it didn't move the metric" is a stronger presentation beat than silence.
 
-The fix is a genuine three-way split: train (fit), validation (tune and select), test (touched
-**once**, at the end, never iterated against). If the test set has already been looked at
-repeatedly, it is no longer a test set, and the honest move is to say so in the presentation
-rather than quietly report the number.
+| Run | Change | Train acc | Val acc | Notes |
+|---|---|---|---|---|
+| baseline | 224×224 CNN (team's) | — | — | reference point |
+| | | | | |
 
-**Assigned exploration:**
+Assigned exploration from Week 8:
 
-- Augmentation — rotations and brightness jitter via `torchvision.transforms`
-- Hyperparameter tuning with cross-validation (Week 5 resources)
-- Possibly one iteration of a multimodal model using depth to estimate food mass
+- **Augmentation** — rotations and brightness jitter via `torchvision.transforms`. Apply to the
+  *training* set only. Augmenting validation changes what you're measuring against.
+- **Hyperparameter tuning with cross-validation** (Week 5 resources)
+- **Multimodal** — depth to estimate food mass, possibly one iteration
+
+## The leakage concern — read before reporting any number
+
+The Week 8 concern was using the validation set for both refinement *and* selection. If you tune
+against a set and then select against the same set, its score stops being an estimate of
+generalization and becomes a number you optimized directly. The 66.9% may be optimistic for this
+reason.
+
+A genuine three-way split: **train** (fit) → **validation** (tune and select) → **test** (touched
+exactly once, at the end, never iterated against).
+
+If the test set has already been evaluated against repeatedly, it isn't a test set anymore. The
+honest move is to say so in the presentation. Judges and instructors respond well to "here's the
+methodological limitation we found and how we'd fix it" — and badly to a number that collapses
+under one question.
 
 ## Evaluation checklist (from Ru)
 
 - [ ] Exploratory data analysis
 - [ ] Feature importance (top 5 if many variables)
 - [ ] Confusion matrix
-- [ ] ROC / AUC curves
-- [ ] Performance table: accuracy, precision, recall, specificity, F1
+- [ ] ROC / AUC
+- [ ] Metrics table: accuracy, precision, recall, specificity, F1
 
-A note on that list: **accuracy alone will mislead here.** If nutrition classes are imbalanced,
-a model that always predicts the majority class scores well while being useless. Precision and
-recall are on the list for a reason — lead with them.
+**Accuracy alone will mislead here.** If nutrition classes are imbalanced, always predicting the
+majority class scores well while being useless. Lead with precision and recall — that's why
+they're on the list.
 
 ## Ethics
 
 Nutrition5k was captured in a controlled setting with a specific culinary range. A model trained
-on it will be least accurate on cuisines least represented in it — and food datasets skew Western
-by default. If this tool were ever aimed at real dietary decisions, that skew would mean the
-people it serves worst are the ones whose food it never saw. Worth stating plainly in the
-presentation; it's the kind of limitation that reads as maturity rather than weakness.
+on it is least accurate on cuisines least represented in it, and food datasets skew Western by
+default. If this were ever aimed at real dietary decisions, the people it serves worst would be
+those whose food it never saw. Worth stating plainly — it reads as maturity, not weakness.
 
 ## Setup
 
@@ -81,8 +89,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`data/` is gitignored — never commit the dataset. It bloats history permanently and Nutrition5k
-has its own license terms.
+`data/` is gitignored. Never commit the dataset: it bloats history permanently and Nutrition5k
+carries its own license terms.
 
 ## License
 
