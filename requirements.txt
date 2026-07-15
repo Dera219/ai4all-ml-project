@@ -1,7 +1,21 @@
+# Core
 numpy>=1.26
 pandas>=2.2
 scikit-learn>=1.5
+
+# Model + inference
+torch>=2.4
+torchvision>=0.19
+pillow>=10.4
+joblib>=1.4
+
+# Deployment (Week 10)
+streamlit>=1.38
+
+# Notebooks / analysis
 matplotlib>=3.9
 seaborn>=0.13
 jupyter>=1.0
+
+# Dev
 pytest>=8.0

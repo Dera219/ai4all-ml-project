@@ -5,6 +5,7 @@
 .vscode/
 .idea/
 *.log
+
 __pycache__/
 *.py[cod]
 .venv/
@@ -16,9 +17,16 @@ venv/
 dist/
 build/
 .ipynb_checkpoints/
+
+# Dataset — never commit. Nutrition5k is huge and carries its own license terms.
 data/raw/*
 data/interim/*
 data/processed/*
 !data/**/.gitkeep
+
+# Model artifacts. ~13MB each; git keeps every version forever. See EXPORT_WEIGHTS.md.
 models/*
 !models/.gitkeep
+*.pth
+*.pt
+*.pkl
