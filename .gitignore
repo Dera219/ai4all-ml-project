@@ -30,3 +30,5 @@ models/*
 *.pth
 *.pt
 *.pkl
+.cache/
+reports/*.log

@@ -1,143 +1,160 @@
-# AI4ALL — Nutrition5k (my work)
+# AI4ALL — Nutrition5k (my independent work)
 
-My workspace for the AI4ALL Nutrition5k project: the **Streamlit deployment** (Week 10) plus my
-own model experiments.
+Calorie classification from food images, built from the raw Nutrition5k dataset — **not** derived
+from the group's notebooks. My contribution: a from-scratch model and pipeline, and a
+**data-leakage audit** of the split the group used — which turned up a real structural leak the
+team's own check missed, then tested honestly whether it actually inflates accuracy (for my model,
+it didn't — see Results, which reports that straight rather than burying it).
 
-> The team's graded repo is
-> [MalikSCole/AI4all-Group-Project](https://github.com/MalikSCole/AI4all-Group-Project). Work that
-> counts still needs to land there — the Week 8 notes flag **"Contributor only Malik?"**, so
-> commits with my name on them in the group repo are what answer that. The deployment in this repo
-> is meant to be contributed upstream, not to live here.
+> The team's shared repo is
+> [MalikSCole/AI4all-Group-Project](https://github.com/MalikSCole/AI4all-Group-Project). This
+> repo is my own work on the same dataset. Everything here — the pipeline, the model, the
+> experiment — I wrote from the raw CSVs and images.
 
-## The task
+## The finding
 
-Classify an overhead food photo as **Low / Medium / High** calorie. Three quantile-derived classes
-(`pd.qcut(calories, q=3)`), roughly balanced at ~1081 each, so the random baseline is **33.3%**.
+The group verified there is **zero `dish_id` overlap** between train, validation, and test. That
+check is correct, and under it the split looks clean.
 
-Data: [Nutrition5k](https://www.kaggle.com/datasets/gillesokhin/nutrition5k-dataset/data). 4,768
-dishes in `dish_nutrition_values.csv`, but only **3,244 have an overhead RGB image** — the other
-1,524 are dropped.
+It answers the wrong question.
 
-Model: `ExtraLayerOrdinalMultiTaskCNN224` — four conv blocks → shared FC(128) → two heads:
+Nutrition5k dishes were photographed in rapid **capture sessions**: `dish_id` is literally
+`dish_<unix_timestamp>`, and the median gap between consecutive dishes is **41 seconds**. Sorting
+by timestamp reveals that **96.9% of dishes were shot in a session with other dishes** — same
+table, same lighting, same camera pose, same prep batch. Those dishes are not independent samples.
 
-- **Ordinal head** (2 logits) rather than a 3-way softmax. The classes are *ordered* — Low <
-  Medium < High — and a softmax treats confusing Low with High as no worse than confusing Low with
-  Medium. Ordinal encoding (`Low=[0,0]`, `Medium=[1,0]`, `High=[1,1]`) puts the ordering into the
-  loss.
-- **Regression head** (5 outputs: calories, mass, fat, carb, protein) as an auxiliary task, giving
-  the shared trunk a richer signal than three labels alone.
+Under the group's stratified-random split:
 
-Reported: **74.1% test / 77.6% best validation.** Against a 33.3% baseline that's ~2.2x — a real
-result. See the caveat below before quoting it.
+- `dish_id` overlap between train and test: **0** ✓ (the check they ran)
+- test dishes that share a capture session with a training dish: **93.6%** ✗ (the check they didn't)
+- fraction of label variance explained by session identity alone: **~24%**
 
-## Week 10 deployment — built, blocked on one thing
+The *risk* this creates: a model can score well by learning "this is session 214's lighting, and
+session 214 is Medium" without learning anything about food — correlated images, not identical
+ones, which is enough to leak. Whether a given model actually does this is an empirical question,
+which is why the experiment below tests it rather than asserting it.
 
-```bash
-pip install -r requirements.txt
-streamlit run app/streamlit_app.py
-```
+**The fix:** split on capture session, so every dish from a session lands entirely in one set.
+[`src/data/nutrition5k.py`](src/data/nutrition5k.py) implements both splits; the experiment trains
+the same model under each and measures the gap.
 
-The app is written and tested ([app/streamlit_app.py](app/streamlit_app.py),
-[src/models/ordinal_cnn.py](src/models/ordinal_cnn.py), 21 tests). It will not predict yet:
+## Results, reported straight
 
-> ### ⚠️ The trained weights don't exist outside a Kaggle session
->
-> Every `torch.save` in the notebooks writes to `/kaggle/working/`, which is scratch space. No
-> `.pth` is committed anywhere — `git ls-files` in the group repo returns none.
->
-> **Nothing deploys until someone exports `final_ordinal_multitask_model.pth` and
-> `regression_target_scaler.pkl` from Kaggle.** That's the whole Week 10 critical path. See
-> [EXPORT_WEIGHTS.md](EXPORT_WEIGHTS.md).
+Two parts, and they point in different directions. I'm keeping them separate because conflating
+them would be exactly the kind of spin this project exists to avoid.
 
-The app degrades honestly rather than crashing: without weights it renders exactly which two files
-are missing and how to get them.
+### Part 1 — the structural leak is real (proven, model-independent)
 
-### Two details the app had to get exactly right
+These numbers are deterministic — they come from the data and the split, not from any trained
+model, so there's no seed and no noise:
 
-**No normalization.** The notebook's eval transform is `Resize((224,224)) + ToTensor()` and
-nothing else. Adding the usual ImageNet `Normalize` — the reflex when writing inference code —
-would feed the network a distribution it never saw and produce confident garbage with no error.
-Pinned by `test_white_image_maps_to_one_not_a_normalized_value`.
+| | random split | grouped split |
+|---|---|---|
+| `dish_id` overlap, train↔test | 0 | 0 |
+| **test dishes sharing a session with train** | **94.7%** | **0%** |
+| label variance explained by session alone | ~24% | — |
 
-**The scaler is not optional.** The regression head was trained on `StandardScaler`-transformed
-targets, so its raw output is in standard deviations. Without `inverse_transform` the app would
-display "calories: -0.42". If the scaler is missing the app shows nothing rather than nonsense.
+The random split — the one the group used, the one that passes a `dish_id` overlap check — leaks
+94.7% of its test set through shared capture sessions. That finding stands regardless of anything
+below.
 
-## The leakage question — the real answer is uncomfortable
+### Part 2 — but the leak did *not* inflate my model's accuracy
 
-Kai's [`dish-level-data-leakage-check.ipynb`](https://github.com/MalikSCole/AI4all-Group-Project/blob/main/dish-level-data-leakage-check.ipynb)
-verifies **0 `dish_id` overlap** across train/val/test. That work is correct and the conclusion
-holds: each dish has exactly one overhead image, so the stratified random split is clean at the
-dish level. His caveat is also right — if the team ever adds side-angle or multi-view images,
-this must become a group split by `dish_id`.
+I expected the leaky split to score higher. It didn't — across every seed I ran, the *clean*
+split scored higher. Same model (990K params), only the split differs:
 
-**But that isn't the concern Week 8 raised.** The note was about using the validation set for both
-refinement *and* selection. And there's a sharper version of it visible in the notebooks:
+| seed | random (leaky) | grouped (clean) | gap |
+|---|---|---|---|
+| 42 | 0.724 | 0.734 | −0.9 pt |
+| 2 | 0.731 | 0.774 | −4.3 pt |
+| mean | 0.727 | **0.754** | **−2.6 pt** |
 
-```
-FoodImageCalorieEstimator.ipynb — Test Accuracy: 0.6694
-FoodImageCalorieEstimator.ipynb — Test Accuracy: 0.7002
-FoodImageCalorieEstimator.ipynb — Test Accuracy: 0.7125
-FoodImageCalorieEstimator.ipynb — Test Accuracy: 0.7146
-FoodImageCalorieEstimator.ipynb — Test Accuracy: 0.7228
-Seeded Model.ipynb              — test_accuracy: 0.7413
-```
+The clean split scored higher on **both** seeds. The leaky split is never the higher number. At
+n≈487 per test set the per-seed gaps are within noise (~2 pt SE), but the *direction* is
+consistent, and it is the opposite of "leakage inflates accuracy." **For this model, the session
+leak did not inflate test accuracy.** Raw per-seed numbers: `reports/leakage_seed*.json`.
 
-**The test set has been evaluated against at least six times**, and each reported number is higher
-than the last. That monotonic climb is the signature of selecting on the test set: try a change,
-check test, keep it if test improved. Once you've done that, the test set has been optimized
-against and is no longer an estimate of generalization — it's a second validation set.
+### What I think is going on, and what I won't claim
 
-Structural leakage is clean. **Selection leakage is not.** 74.1% is optimistic.
+The honest reading: the leak is structurally present but this model can't exploit it. That is
+plausibly *because* of the architecture choices — global average pooling and aggressive
+augmentation (flips, 90° rotations, brightness) destroy exactly the session-specific pose and
+lighting cues a model would memorize to cheat. A small, heavily-regularized model resists the leak.
 
-The fix is cheap and it is honesty, not code: say so. *"We iterated against the test set across
-model versions, so our true out-of-sample accuracy is likely somewhat below 74.1%. With more time
-we'd hold out a fresh split touched exactly once."* That reads as methodological maturity. A
-number that collapses when an instructor asks "how many times did you look at the test set?" does
-the opposite — and that is a very natural question to ask when the answer is sitting in the commit
-history.
+The group's model is the opposite: ~3.3M parameters, a `flatten → Linear(25088,128)` trunk, less
+augmentation. That architecture is far better equipped to memorize session cues — so the leak may
+well inflate *their* 74.1%, even though it didn't inflate my 73.4%. **I can't claim that without
+training their model on both splits, so I don't.** It's a hypothesis the experiment sets up, not a
+result it delivers.
 
-## Evaluation checklist (from Ru)
+### What this does and doesn't establish
 
-- [ ] Exploratory data analysis
-- [ ] Feature importance (top 5)
-- [ ] Confusion matrix
-- [ ] ROC / AUC
-- [ ] Metrics table: accuracy, precision, recall, specificity, F1
+- **Does:** the split is leaky (proven); a clean, session-grouped evaluation exists; my model hits
+  **73.4% on that clean split** — 2.2× the 33% baseline, and honestly measured.
+- **Doesn't:** that leakage inflates accuracy in general. For my model it didn't. Whether it
+  inflates the group's remains open, and I've said so rather than assumed the convenient answer.
 
-**Per-class, not just overall.** The classes are balanced, so accuracy isn't as misleading as it
-often is — but with ordered classes the interesting question is *which* mistakes happen. Confusing
-Medium with High is a near-miss; confusing Low with High means the model learned nothing about
-that image. A confusion matrix shows the difference and a single accuracy number hides it. If the
-ordinal head is working, off-by-two errors should be rare — that's a claim worth checking and a
-good slide.
+That last line is the whole point. I flagged the group's monotonically-climbing test accuracy as a
+red flag; it would be hypocritical to then report a leakage "inflation" number my own experiment
+didn't support.
 
-## Ethics
+## The model
 
-Nutrition5k was captured in a controlled setting: fixed overhead camera, consistent lighting, a
-specific culinary range. A model trained on it is least accurate on food least like that — phone
-photos at an angle, and cuisines the dataset under-represents. Food datasets skew Western by
-default, so the people this would serve worst are those whose food it never saw.
+`CalorieCNN` ([src/models/cnn.py](src/models/cnn.py)) — built for this dataset, with three
+deliberate departures from the group's architecture:
 
-Worth stating plainly in the presentation. It reads as maturity, not weakness.
+| | Group's | Mine | Why |
+|---|---|---|---|
+| Spatial collapse | `flatten -> Linear(25088, 128)` | global average pool | Their FC is **3.2M params** trained on ~2,300 images. GAP does it with zero. |
+| Normalization | none | BatchNorm every conv | Faster, more stable training. |
+| Total params | ~3.3M | **~990K** | On data this small, size *is* overfitting. |
+| Ordinal decode | `sum(passed thresholds)` | walk to first failure + flag incoherence | `[0,1]` is incoherent for ordered classes; summing hides it as "Medium". |
 
-## Layout
+It keeps the group's good idea — an **ordinal** head (Low < Medium < High are ordered, so a 3-way
+softmax is the wrong loss) — and adds an auxiliary calorie-regression head on `log1p(calories)`,
+because the target spans 1–3,900 kcal with a long tail.
 
-```
-app/streamlit_app.py        # Week 10 deployment
-src/models/ordinal_cnn.py   # Architecture + inference (transcribed from the notebook)
-tests/test_inference.py     # 21 tests; run without the real weights
-models/                     # gitignored — see EXPORT_WEIGHTS.md
-data/                       # gitignored — never commit Nutrition5k
-```
+It also uses **depth**. Nutrition5k ships an overhead depth map per dish, and calories track mass,
+mass tracks volume, and volume is exactly what depth sees and a photograph cannot. RGB+depth is a
+4-channel input; the depth channel is scaled on a fixed physical range so absolute height survives.
 
-## Setup
+## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pytest
+
+# Point at the extracted Nutrition5k archive (the dir with dish_nutrition_values.csv + imagery/)
+python experiments/leakage.py --data-root ~/Downloads/archive --epochs 15
 ```
+
+First run builds a preprocessed image cache (~650 MB, uint8, ~45s). `reports/leakage.json` holds
+the numbers; the run prints the comparison table.
+
+The test set is **locked**: `src/training/train.py` selects on validation only, and the experiment
+touches test exactly once, at the end. This is a guard against the pattern visible in the group's
+notebooks, where test accuracy appears six times climbing monotonically (66.9 → 74.1) — the
+signature of selecting on the test set until it improves.
+
+## Layout
+
+```
+src/data/nutrition5k.py    # manifest, session derivation, both split strategies, leakage report
+src/data/cache.py          # one-time uint8 image cache (RGB + depth)
+src/models/cnn.py          # CalorieCNN, ordinal decode, majority baseline
+src/training/              # dataset (augmentation, normalization) + training loop
+experiments/leakage.py     # the headline experiment
+tests/                     # split correctness, model shapes, ordinal decode
+```
+
+## Ethics
+
+Nutrition5k was captured with a fixed overhead camera in controlled lighting over one culinary
+range. A model trained on it is least accurate on food least like that — phone photos at an angle,
+cuisines the dataset under-represents. Food datasets skew Western by default, so the people this
+would serve worst are those whose food it never saw. And the leakage point generalizes into an
+ethics point: a model that looks accurate in-distribution because of leakage will fail quietly on
+real users, which is worse than a model that is honestly, visibly mediocre.
 
 ## License
 

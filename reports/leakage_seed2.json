@@ -1,0 +1,29 @@
+{
+  "arms": [
+    {
+      "split": "grouped",
+      "contaminated_fraction": 0.0,
+      "baseline_accuracy": 0.31224489212036133,
+      "best_val_accuracy": 0.731006160164271,
+      "best_epoch": 9,
+      "test_accuracy": 0.773469387755102,
+      "test_mae_calories": 110.35222491828763,
+      "incoherent_fraction": 0.0,
+      "n_train": 2262,
+      "n_test": 490
+    },
+    {
+      "split": "random",
+      "contaminated_fraction": 0.934156378600823,
+      "baseline_accuracy": 0.3333333432674408,
+      "best_val_accuracy": 0.7304526748971193,
+      "best_epoch": 8,
+      "test_accuracy": 0.7304526748971193,
+      "test_mae_calories": 127.28066762288411,
+      "incoherent_fraction": 0.0,
+      "n_train": 2267,
+      "n_test": 486
+    }
+  ],
+  "gap": -0.0430167128579827
+}
