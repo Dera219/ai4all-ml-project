@@ -2,9 +2,11 @@
 
 Calorie classification from food images, built from the raw Nutrition5k dataset — **not** derived
 from the group's notebooks. My contribution: a from-scratch model and pipeline, and a
-**data-leakage audit** of the split the group used — which turned up a real structural leak the
-team's own check missed, then tested honestly whether it actually inflates accuracy (for my model,
-it didn't — see Results, which reports that straight rather than burying it).
+**data-leakage audit** of the split the group used. It found a structural leak the team's own
+check missed (94.7% of the test set contaminated), and a controlled 5-seed, 2-architecture
+experiment showing that leak inflates the reported accuracy by **~3 points, unanimously** — so the
+project's 74.1% is really ~71%. Along the way my first experiment reached the *wrong* conclusion;
+the README shows that too, because that's the honest record.
 
 > The team's shared repo is
 > [MalikSCole/AI4all-Group-Project](https://github.com/MalikSCole/AI4all-Group-Project). This
@@ -38,15 +40,13 @@ which is why the experiment below tests it rather than asserting it.
 [`src/data/nutrition5k.py`](src/data/nutrition5k.py) implements both splits; the experiment trains
 the same model under each and measures the gap.
 
-## Results, reported straight
+## Results
 
-Two parts, and they point in different directions. I'm keeping them separate because conflating
-them would be exactly the kind of spin this project exists to avoid.
+Two experiments. The first (`experiments/leakage.py`) had a confound; the second
+(`experiments/leakage_rigorous.py`) fixes it and is the one to trust. I'm keeping both, and
+reporting where the first misled me, because that's the honest record.
 
-### Part 1 — the structural leak is real (proven, model-independent)
-
-These numbers are deterministic — they come from the data and the split, not from any trained
-model, so there's no seed and no noise:
+### Step 1 — the structural leak (proven, deterministic, no model involved)
 
 | | random split | grouped split |
 |---|---|---|
@@ -54,49 +54,77 @@ model, so there's no seed and no noise:
 | **test dishes sharing a session with train** | **94.7%** | **0%** |
 | label variance explained by session alone | ~24% | — |
 
-The random split — the one the group used, the one that passes a `dish_id` overlap check — leaks
-94.7% of its test set through shared capture sessions. That finding stands regardless of anything
-below.
+The random split — what the group used, the one that passes a `dish_id` overlap check — leaks
+94.7% of its test set through shared capture sessions. This stands regardless of any model.
 
-### Part 2 — but the leak did *not* inflate my model's accuracy
+### Step 2 — does the leak inflate the reported number? (the airtight experiment)
 
-I expected the leaky split to score higher. It didn't — across every seed I ran, the *clean*
-split scored higher. Same model (990K params), only the split differs:
+The question that matters, done properly. Every model is scored on **one common held-out test set
+of session-disjoint dishes** — the same clean yardstick for all arms, so the comparison isn't
+confounded by different test sets (the flaw in my first attempt). Then, holding that yardstick
+fixed, I vary only the train/val split: **leaky** (dish-random, val shares sessions with train,
+what the group did) vs **clean** (session-grouped). Two architectures — my small GAP model and a
+faithful reproduction of the group's big flatten→FC model. 5 seeds. No augmentation, so this
+measures the raw leak. `inflation = (the split's own validation accuracy) − (true accuracy on the
+common clean test)`:
 
-| seed | random (leaky) | grouped (clean) | gap |
-|---|---|---|---|
-| 42 | 0.724 | 0.734 | −0.9 pt |
-| 2 | 0.731 | 0.774 | −4.3 pt |
-| mean | 0.727 | **0.754** | **−2.6 pt** |
+| arch / split | val acc | true test | **inflation** | positive in |
+|---|---|---|---|---|
+| small / **leaky** | 0.774 | 0.731 | **+3.3 pt** | **5/5 seeds** |
+| small / clean | 0.741 | 0.747 | −0.6 pt | 1/5 |
+| big / **leaky** | 0.737 | 0.713 | **+2.4 pt** | **5/5 seeds** |
+| big / clean | 0.705 | 0.714 | −1.0 pt | 1/5 |
 
-The clean split scored higher on **both** seeds. The leaky split is never the higher number. At
-n≈487 per test set the per-seed gaps are within noise (~2 pt SE), but the *direction* is
-consistent, and it is the opposite of "leakage inflates accuracy." **For this model, the session
-leak did not inflate test accuracy.** Raw per-seed numbers: `reports/leakage_seed*.json`.
+**Pooled: the leaky split inflates the reported accuracy by +3.3 pt, positive in 10/10 cells. The
+clean split's validation tracks truth (−0.8 pt, positive in 2/10).** The result is unanimous, not
+within-noise — every leaky cell across both architectures and all five seeds overstates true
+generalization.
 
-### What I think is going on, and what I won't claim
+**So the leak is real *and* it inflates the number — the opposite of what my first experiment
+suggested.** That earlier run compared a leaky test set to a *different* clean test set, so
+test-set difficulty swamped the signal and the clean set happened to score higher. Scoring
+everything on one common clean test removes that confound and the inflation appears cleanly. I'm
+leaving the first experiment in the repo, wrong conclusion and all, because pretending I got it
+right the first time would be its own dishonesty.
 
-The honest reading: the leak is structurally present but this model can't exploit it. That is
-plausibly *because* of the architecture choices — global average pooling and aggressive
-augmentation (flips, 90° rotations, brightness) destroy exactly the session-specific pose and
-lighting cues a model would memorize to cheat. A small, heavily-regularized model resists the leak.
+### What I got wrong, explicitly
 
-The group's model is the opposite: ~3.3M parameters, a `flatten → Linear(25088,128)` trunk, less
-augmentation. That architecture is far better equipped to memorize session cues — so the leak may
-well inflate *their* 74.1%, even though it didn't inflate my 73.4%. **I can't claim that without
-training their model on both splits, so I don't.** It's a hypothesis the experiment sets up, not a
-result it delivers.
+I hypothesized the **big** flatten→FC model would inflate **more** — that leakage is about
+high-capacity memorization. **The data refutes it.** The small model inflated slightly *more*
+(+3.3 vs +2.4), and both were unanimous. The inflation doesn't come from a model memorizing
+sessions; it comes from the **validation set itself being contaminated** — it contains
+session-mates of training dishes, so any model that learns session-correlated features (even
+legitimately) scores higher on it. That makes the finding *stronger*, not weaker: it's
+architecture-independent, so it applies to the group's model regardless of its design.
 
-### What this does and doesn't establish
+### What this establishes about the group's 74.1%
 
-- **Does:** the split is leaky (proven); a clean, session-grouped evaluation exists; my model hits
-  **73.4% on that clean split** — 2.2× the 33% baseline, and honestly measured.
-- **Doesn't:** that leakage inflates accuracy in general. For my model it didn't. Whether it
-  inflates the group's remains open, and I've said so rather than assumed the convenient answer.
+Their reported number is measured on a session-contaminated test set (94.7% contaminated — the
+same condition as my "leaky" arm). This experiment says that inflates the number by ~2–3 points,
+unanimously and independent of architecture. **So true generalization is ~71%, not 74%.** One
+caveat, stated because it cuts against my own point: this measured the *no-augmentation* effect,
+and the group uses some augmentation, which suppresses the leak (it destroys session-specific pose
+and lighting — see below). Their real inflation is therefore somewhere in (0, 3] points, not
+necessarily the full 3.
 
-That last line is the whole point. I flagged the group's monotonically-climbing test accuracy as a
-red flag; it would be hypocritical to then report a leakage "inflation" number my own experiment
-didn't support.
+### Augmentation is a genuine mitigation (reconciling the two experiments)
+
+My first experiment used my model **with** aggressive augmentation and found ~0 net effect; this
+one, **without** augmentation, finds +3.3. Both are right: augmentation (flips, 90° rotations,
+brightness jitter) destroys exactly the session-specific cues the leak relies on. That's a real,
+useful result — augment hard and you partially inoculate against session leakage — but it is a
+mitigation, not a fix. The fix is the grouped split, because you should not have to hope your
+augmentation happened to cover the leak.
+
+### Bottom line
+
+- **My model, clean session-grouped evaluation: ~73–75%** — 2.2× the 33% baseline, honestly measured.
+- A session-contaminated evaluation inflates the reported number by **~3 points, unanimously across
+  5 seeds and 2 architectures.** The group's 74.1% is such a number; true is ~71%.
+- The effect is architecture-independent — my capacity hypothesis was wrong, and I said so.
+
+Raw numbers: `reports/leakage_rigorous.json` (20 cells) and `reports/leakage_seed*.json` (the
+first, confounded experiment, kept for the record).
 
 ## The model
 
@@ -125,11 +153,16 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Point at the extracted Nutrition5k archive (the dir with dish_nutrition_values.csv + imagery/)
+
+# The airtight experiment — 5 seeds x 2 architectures x 2 splits, common clean test:
+python experiments/leakage_rigorous.py --data-root ~/Downloads/archive
+
+# The first, confounded experiment (kept for the record; see Results for why it misled):
 python experiments/leakage.py --data-root ~/Downloads/archive --epochs 15
 ```
 
-First run builds a preprocessed image cache (~650 MB, uint8, ~45s). `reports/leakage.json` holds
-the numbers; the run prints the comparison table.
+First run builds a preprocessed image cache (uint8, ~45s). `reports/leakage_rigorous.json` holds
+the airtight numbers; each run prints its comparison table.
 
 The test set is **locked**: `src/training/train.py` selects on validation only, and the experiment
 touches test exactly once, at the end. This is a guard against the pattern visible in the group's

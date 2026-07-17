@@ -20,7 +20,9 @@ from src.data.nutrition5k import (
 )
 
 
-def synthetic_manifest(n_sessions: int = 60, per_session: int = 5, seed: int = 0) -> pd.DataFrame:
+def synthetic_manifest(
+    n_sessions: int = 60, per_session: int = 5, seed: int = 0
+) -> pd.DataFrame:
     """Dishes in capture sessions, with the dish_id = dish_<timestamp> structure of the real data.
 
     Within a session, timestamps are ~40s apart; between sessions, hours apart. Calories are
@@ -36,7 +38,9 @@ def synthetic_manifest(n_sessions: int = 60, per_session: int = 5, seed: int = 0
         for _ in range(per_session):
             ts += rng.integers(20, 90)  # seconds within a session
             calories = max(1.0, rng.normal(session_mean, 30))
-            rows.append({"dish_id": f"dish_{ts}", "calories": calories, "mass": calories * 1.5})
+            rows.append(
+                {"dish_id": f"dish_{ts}", "calories": calories, "mass": calories * 1.5}
+            )
     return pd.DataFrame(rows)
 
 
@@ -53,7 +57,9 @@ class TestSessionDerivation:
         # 60 sessions were generated; the deriver should find about that many.
         assert 55 <= manifest.session.nunique() <= 65
 
-    def test_dishes_within_a_session_are_close_in_time(self, manifest: pd.DataFrame) -> None:
+    def test_dishes_within_a_session_are_close_in_time(
+        self, manifest: pd.DataFrame
+    ) -> None:
         for _, group in manifest.groupby("session"):
             if len(group) > 1:
                 span = group.ts.max() - group.ts.min()
@@ -88,7 +94,9 @@ class TestGroupedSplitIsClean:
     def test_every_dish_lands_somewhere_once(self, manifest: pd.DataFrame) -> None:
         splits = grouped_splits(manifest, seed=1)
         ids = (
-            list(splits.train.dish_id) + list(splits.val.dish_id) + list(splits.test.dish_id)
+            list(splits.train.dish_id)
+            + list(splits.val.dish_id)
+            + list(splits.test.dish_id)
         )
         assert len(ids) == len(manifest)
         assert len(set(ids)) == len(manifest), "a dish appeared in more than one set"
@@ -102,7 +110,9 @@ class TestGroupedSplitIsClean:
 class TestRandomSplitLeaks:
     """The control arm — this SHOULD leak. If it stops, the experiment lost its contrast."""
 
-    def test_dish_id_overlap_is_zero_yet_sessions_leak(self, manifest: pd.DataFrame) -> None:
+    def test_dish_id_overlap_is_zero_yet_sessions_leak(
+        self, manifest: pd.DataFrame
+    ) -> None:
         splits = random_splits(manifest, seed=1)
 
         # The check the group ran — passes.
@@ -133,13 +143,62 @@ class TestClassEdges:
         assert edges[-1] == np.inf
 
 
+class TestCommonTestDesign:
+    """The rigorous experiment's setup: a held-out clean test shared across all arms, plus a
+    repartitionable pool. These guarantees are what make that experiment's comparison valid."""
+
+    def test_held_out_test_shares_no_session_with_pool(
+        self, manifest: pd.DataFrame
+    ) -> None:
+        from src.data.nutrition5k import holdout_clean_test
+
+        pool, test = holdout_clean_test(manifest, test_fraction=0.2, seed=0)
+        assert not (set(pool.session) & set(test.session))
+        assert len(pool) + len(test) == len(manifest)
+
+    def test_leaky_train_val_shares_sessions(self, manifest: pd.DataFrame) -> None:
+        from src.data.nutrition5k import holdout_clean_test, train_val_split
+
+        pool, _ = holdout_clean_test(manifest, seed=0)
+        train, val = train_val_split(pool, strategy="leaky", seed=0)
+        # The whole point of the leaky arm: val overlaps train at the session level.
+        assert set(train.session) & set(val.session)
+
+    def test_clean_train_val_shares_no_sessions(self, manifest: pd.DataFrame) -> None:
+        from src.data.nutrition5k import holdout_clean_test, train_val_split
+
+        pool, _ = holdout_clean_test(manifest, seed=0)
+        train, val = train_val_split(pool, strategy="clean", seed=0)
+        assert not (set(train.session) & set(val.session))
+
+    def test_both_strategies_draw_from_the_same_pool(
+        self, manifest: pd.DataFrame
+    ) -> None:
+        """Only the partition differs — same dishes, so the split strategy is the sole variable."""
+        from src.data.nutrition5k import holdout_clean_test, train_val_split
+
+        pool, _ = holdout_clean_test(manifest, seed=0)
+        leaky = train_val_split(pool, strategy="leaky", seed=0)
+        clean = train_val_split(pool, strategy="clean", seed=0)
+        leaky_ids = set(leaky[0].dish_id) | set(leaky[1].dish_id)
+        clean_ids = set(clean[0].dish_id) | set(clean[1].dish_id)
+        assert leaky_ids == clean_ids == set(pool.dish_id)
+
+    def test_unknown_strategy_rejected(self, manifest: pd.DataFrame) -> None:
+        from src.data.nutrition5k import holdout_clean_test, train_val_split
+
+        pool, _ = holdout_clean_test(manifest, seed=0)
+        with pytest.raises(ValueError, match="leaky.*clean"):
+            train_val_split(pool, strategy="stratified", seed=0)
+
+
 class TestManifestCleaning:
     def test_readable_check_catches_zero_byte_files(self, tmp_path) -> None:
         from src.data.nutrition5k import _is_readable
 
         empty = tmp_path / "empty.png"
         empty.touch()
-        assert empty.exists()          # the trap: it exists
+        assert empty.exists()  # the trap: it exists
         assert not _is_readable(empty)  # but has no bytes
 
         real = tmp_path / "real.png"

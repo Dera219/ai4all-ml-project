@@ -52,20 +52,22 @@ class CalorieCNN(nn.Module):
     depth map sees and a photograph cannot.
     """
 
-    def __init__(self, *, in_channels: int = 3, width: int = 32, dropout: float = 0.3) -> None:
+    def __init__(
+        self, *, in_channels: int = 3, width: int = 32, dropout: float = 0.3
+    ) -> None:
         super().__init__()
         self.in_channels = in_channels
 
         self.features = nn.Sequential(
             ConvBlock(in_channels, width),
             ConvBlock(width, width),
-            nn.MaxPool2d(2),                      # 224 -> 112
+            nn.MaxPool2d(2),  # 224 -> 112
             ConvBlock(width, width * 2),
-            nn.MaxPool2d(2),                      # 112 -> 56
+            nn.MaxPool2d(2),  # 112 -> 56
             ConvBlock(width * 2, width * 4),
-            nn.MaxPool2d(2),                      # 56 -> 28
+            nn.MaxPool2d(2),  # 56 -> 28
             ConvBlock(width * 4, width * 8),
-            nn.MaxPool2d(2),                      # 28 -> 14
+            nn.MaxPool2d(2),  # 28 -> 14
             ConvBlock(width * 8, width * 8),
         )
         # Zero parameters, and it makes the model input-size agnostic.
@@ -87,6 +89,48 @@ class CalorieCNN(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
+class GroupStyleCNN(nn.Module):
+    """A faithful reproduction of the group's architecture, for the leakage comparison.
+
+    Their `ExtraLayerOrdinalMultiTaskCNN224`: four conv blocks (no BatchNorm) into a **giant
+    flatten -> Linear**, then ordinal + regression heads. The defining feature is that flatten:
+    at 224px it is `Linear(128*14*14=25088, 128)` = 3.2M parameters, which is what a
+    high-capacity model needs to memorize training-specific detail — exactly the mechanism that
+    would let it exploit session leakage.
+
+    The only change from their code is `nn.LazyLinear` instead of a hardcoded `Linear(25088, ...)`,
+    so the same architecture runs at any input size (the flatten dimension is inferred on first
+    forward). At 224px it is bit-for-bit the same parameter count as theirs; at 160px it adapts.
+    This exists ONLY as the high-capacity arm of the experiment — it is not the model I ship.
+    """
+
+    def __init__(self, *, in_channels: int = 3, dropout: float = 0.3) -> None:
+        super().__init__()
+        self.in_channels = in_channels
+        self.conv1 = nn.Conv2d(in_channels, 16, 3, padding=1)
+        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
+        self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
+        self.conv4 = nn.Conv2d(64, 128, 3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.shared_fc = nn.LazyLinear(128)  # the giant flatten->FC, size-adaptive
+        self.dropout = nn.Dropout(dropout)
+        self.ordinal_head = nn.Linear(128, 2)
+        self.regression_head = nn.Linear(128, 1)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv3(x)))
+        x = self.pool(F.relu(self.conv4(x)))
+        x = x.flatten(1)
+        features = self.dropout(F.relu(self.shared_fc(x)))
+        return self.ordinal_head(features), self.regression_head(features).squeeze(-1)
+
+    @property
+    def n_parameters(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+
 def decode_ordinal(logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Ordinal logits -> (class index, was_coherent).
 
@@ -97,7 +141,7 @@ def decode_ordinal(logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     Also returns whether each prediction's thresholds were self-consistent, so incoherence can be
     reported instead of hidden.
     """
-    passed = (torch.sigmoid(logits) >= 0.5).int()          # (N, 2)
+    passed = (torch.sigmoid(logits) >= 0.5).int()  # (N, 2)
     first = passed[:, 0]
     second = passed[:, 1]
 

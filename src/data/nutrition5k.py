@@ -118,7 +118,9 @@ def _is_readable(path: Path) -> bool:
         return False
 
 
-def sessions_for(df: pd.DataFrame, *, gap_seconds: int = SESSION_GAP_SECONDS) -> pd.DataFrame:
+def sessions_for(
+    df: pd.DataFrame, *, gap_seconds: int = SESSION_GAP_SECONDS
+) -> pd.DataFrame:
     """Derive capture sessions from the timestamp embedded in `dish_id`.
 
     `dish_id` is literally `dish_<unix_timestamp>`. Sorting by it recovers capture order, and a
@@ -132,7 +134,9 @@ def sessions_for(df: pd.DataFrame, *, gap_seconds: int = SESSION_GAP_SECONDS) ->
     return out
 
 
-def add_calorie_classes(df: pd.DataFrame, *, edges: np.ndarray | None = None) -> tuple[pd.DataFrame, np.ndarray]:
+def add_calorie_classes(
+    df: pd.DataFrame, *, edges: np.ndarray | None = None
+) -> tuple[pd.DataFrame, np.ndarray]:
     """Bin calories into Low/Medium/High tertiles.
 
     Returns the frame and the bin edges.
@@ -148,7 +152,9 @@ def add_calorie_classes(df: pd.DataFrame, *, edges: np.ndarray | None = None) ->
         # Make the outer edges permissive so unseen extremes in val/test still bin.
         edges = np.asarray(edges, dtype=float)
         edges[0], edges[-1] = -np.inf, np.inf
-    out["label"] = pd.cut(out.calories, bins=edges, labels=[0, 1, 2], include_lowest=True)
+    out["label"] = pd.cut(
+        out.calories, bins=edges, labels=[0, 1, 2], include_lowest=True
+    )
     out["label"] = out.label.astype(int)
     return out, edges
 
@@ -198,9 +204,15 @@ def grouped_splits(
     train = df[~df.session.isin(test_set | val_set)]
 
     # The guarantee, asserted rather than trusted.
-    assert not (set(train.session) & set(val.session)), "session leaked between train and val"
-    assert not (set(train.session) & set(test.session)), "session leaked between train and test"
-    assert not (set(val.session) & set(test.session)), "session leaked between val and test"
+    assert not (set(train.session) & set(val.session)), (
+        "session leaked between train and val"
+    )
+    assert not (set(train.session) & set(test.session)), (
+        "session leaked between train and test"
+    )
+    assert not (set(val.session) & set(test.session)), (
+        "session leaked between val and test"
+    )
 
     return Splits(
         train=train.reset_index(drop=True),
@@ -228,12 +240,97 @@ def random_splits(
         df, test_size=val_fraction + test_fraction, random_state=seed, stratify=df.label
     )
     relative = test_fraction / (val_fraction + test_fraction)
-    val, test = train_test_split(temp, test_size=relative, random_state=seed, stratify=temp.label)
+    val, test = train_test_split(
+        temp, test_size=relative, random_state=seed, stratify=temp.label
+    )
     return Splits(
         train=train.reset_index(drop=True),
         val=val.reset_index(drop=True),
         test=test.reset_index(drop=True),
     )
+
+
+def holdout_clean_test(
+    df: pd.DataFrame, *, test_fraction: float = 0.2, seed: int = 42
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Carve off a session-disjoint test set, returning (pool, clean_test).
+
+    This is the yardstick for the rigorous experiment. `clean_test` shares no capture session
+    with `pool`, so it is a fair, leakage-free measure of generalization — and, crucially, it is
+    the SAME set of dishes whether `pool` is later split leakily or cleanly. Comparing a leaky
+    split to a clean one on their own separate test sets confounds leakage with test-set
+    difficulty; scoring both on this common held-out test removes that confound.
+    """
+    rng = np.random.default_rng(seed)
+    sizes = df.groupby("session").size()
+    sessions = sizes.index.to_numpy().copy()
+    rng.shuffle(sessions)
+
+    want = int(round(len(df) * test_fraction))
+    test_sessions: list[int] = []
+    count = 0
+    for s in sessions:
+        if count >= want:
+            break
+        test_sessions.append(s)
+        count += int(sizes[s])
+
+    test_set = set(test_sessions)
+    clean_test = df[df.session.isin(test_set)].reset_index(drop=True)
+    pool = df[~df.session.isin(test_set)].reset_index(drop=True)
+    assert not (set(pool.session) & set(clean_test.session)), (
+        "held-out test leaked into pool"
+    )
+    return pool, clean_test
+
+
+def train_val_split(
+    pool: pd.DataFrame,
+    *,
+    strategy: str,
+    val_fraction: float = 0.2,
+    seed: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split `pool` into (train, val) either leakily or cleanly.
+
+    - `strategy="leaky"`: random, dish-level, stratified — val shares sessions with train. This
+      is what the group did, and it is what makes the *validation* number (used for model
+      selection) optimistic.
+    - `strategy="clean"`: session-grouped — val is session-disjoint from train.
+
+    Both draw from the same pool at the same val_fraction, so the only difference is whether the
+    split respects sessions. That is the single variable under test.
+    """
+    if strategy == "leaky":
+        from sklearn.model_selection import train_test_split
+
+        train, val = train_test_split(
+            pool, test_size=val_fraction, random_state=seed, stratify=pool.label
+        )
+        return train.reset_index(drop=True), val.reset_index(drop=True)
+
+    if strategy == "clean":
+        rng = np.random.default_rng(seed)
+        sizes = pool.groupby("session").size()
+        sessions = sizes.index.to_numpy().copy()
+        rng.shuffle(sessions)
+        want = int(round(len(pool) * val_fraction))
+        val_sessions: list[int] = []
+        count = 0
+        for s in sessions:
+            if count >= want:
+                break
+            val_sessions.append(s)
+            count += int(sizes[s])
+        val_set = set(val_sessions)
+        val = pool[pool.session.isin(val_set)].reset_index(drop=True)
+        train = pool[~pool.session.isin(val_set)].reset_index(drop=True)
+        assert not (set(train.session) & set(val.session)), (
+            "clean val leaked into train"
+        )
+        return train, val
+
+    raise ValueError(f"strategy must be 'leaky' or 'clean', got {strategy!r}")
 
 
 def session_leakage_report(splits: Splits) -> dict[str, float | int]:
@@ -247,6 +344,8 @@ def session_leakage_report(splits: Splits) -> dict[str, float | int]:
     return {
         "test_dishes": len(splits.test),
         "test_dishes_with_session_mate_in_train": int(contaminated),
-        "contaminated_fraction": float(contaminated / len(splits.test)) if len(splits.test) else 0.0,
+        "contaminated_fraction": float(contaminated / len(splits.test))
+        if len(splits.test)
+        else 0.0,
         "shared_sessions": len(train_sessions & set(splits.test.session)),
     }

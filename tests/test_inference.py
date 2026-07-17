@@ -79,13 +79,21 @@ class TestArchitectureMatchesCheckpoint:
     `shared_fc` to something tidier silently breaks weight loading."""
 
     def test_head_shapes(self) -> None:
-        ordinal, regression = ExtraLayerOrdinalMultiTaskCNN224()(torch.zeros(2, 3, 224, 224))
+        ordinal, regression = ExtraLayerOrdinalMultiTaskCNN224()(
+            torch.zeros(2, 3, 224, 224)
+        )
         assert ordinal.shape == (2, 2)
         assert regression.shape == (2, 5)
 
     def test_expected_layer_names_exist(self) -> None:
         keys = set(ExtraLayerOrdinalMultiTaskCNN224().state_dict())
-        for expected in ("conv1.weight", "conv4.weight", "shared_fc.weight", "ordinal_head.weight", "regression_head.weight"):
+        for expected in (
+            "conv1.weight",
+            "conv4.weight",
+            "shared_fc.weight",
+            "ordinal_head.weight",
+            "regression_head.weight",
+        ):
             assert expected in keys
 
 
@@ -113,7 +121,9 @@ class TestOrdinalDecoding:
         ("logits", "expected_class"),
         [([-BIG, -BIG], 0), ([BIG, -BIG], 1), ([BIG, BIG], 2)],
     )
-    def test_coherent_patterns_decode_to_documented_classes(self, logits: list[float], expected_class: int) -> None:
+    def test_coherent_patterns_decode_to_documented_classes(
+        self, logits: list[float], expected_class: int
+    ) -> None:
         index, consistent = decode_ordinal(torch.tensor(logits))
         assert index == expected_class
         assert consistent is True
@@ -160,12 +170,18 @@ class TestPrediction:
         assert prediction.class_name in CLASS_NAMES
         assert 0 <= prediction.class_index <= 2
 
-    def test_threshold_probabilities_are_probabilities(self, checkpoint_dir: Path) -> None:
-        clf = CalorieClassifier.load(checkpoint_dir / "final_ordinal_multitask_model.pth")
+    def test_threshold_probabilities_are_probabilities(
+        self, checkpoint_dir: Path
+    ) -> None:
+        clf = CalorieClassifier.load(
+            checkpoint_dir / "final_ordinal_multitask_model.pth"
+        )
         for probability in clf.predict(an_image()).threshold_probabilities:
             assert 0.0 <= probability <= 1.0
 
-    def test_nutrition_is_unscaled_into_plausible_units(self, checkpoint_dir: Path) -> None:
+    def test_nutrition_is_unscaled_into_plausible_units(
+        self, checkpoint_dir: Path
+    ) -> None:
         """Without inverse_transform the head's output is standardized — 'calories: -0.4'.
         Scaler fit around mean 250 kcal, so unscaled output must land in a sane range."""
         clf = CalorieClassifier.load(
@@ -177,24 +193,38 @@ class TestPrediction:
         assert set(nutrition) == set(REGRESSION_TARGETS)
         assert -500 < nutrition["calories"] < 1500
 
-    def test_nutrition_suppressed_when_scaler_missing(self, checkpoint_dir: Path) -> None:
+    def test_nutrition_suppressed_when_scaler_missing(
+        self, checkpoint_dir: Path
+    ) -> None:
         """Better to show nothing than to show standardized numbers labelled 'kcal'."""
-        clf = CalorieClassifier.load(checkpoint_dir / "final_ordinal_multitask_model.pth")
+        clf = CalorieClassifier.load(
+            checkpoint_dir / "final_ordinal_multitask_model.pth"
+        )
         assert clf.predict(an_image()).nutrition is None
 
     @pytest.mark.parametrize("size", [(64, 64), (1920, 1080), (300, 900)])
-    def test_handles_arbitrary_input_sizes(self, checkpoint_dir: Path, size: tuple[int, int]) -> None:
-        clf = CalorieClassifier.load(checkpoint_dir / "final_ordinal_multitask_model.pth")
+    def test_handles_arbitrary_input_sizes(
+        self, checkpoint_dir: Path, size: tuple[int, int]
+    ) -> None:
+        clf = CalorieClassifier.load(
+            checkpoint_dir / "final_ordinal_multitask_model.pth"
+        )
         assert clf.predict(an_image(size)).class_name in CLASS_NAMES
 
-    def test_grayscale_image_is_converted_not_crashed(self, checkpoint_dir: Path) -> None:
-        clf = CalorieClassifier.load(checkpoint_dir / "final_ordinal_multitask_model.pth")
+    def test_grayscale_image_is_converted_not_crashed(
+        self, checkpoint_dir: Path
+    ) -> None:
+        clf = CalorieClassifier.load(
+            checkpoint_dir / "final_ordinal_multitask_model.pth"
+        )
         assert clf.predict(Image.new("L", (200, 200), 128)).class_name in CLASS_NAMES
 
     def test_prediction_is_deterministic(self, checkpoint_dir: Path) -> None:
         """Dropout must be off. If eval() were forgotten, the same image would give different
         answers on refresh — which looks like magic and is actually a bug."""
-        clf = CalorieClassifier.load(checkpoint_dir / "final_ordinal_multitask_model.pth")
+        clf = CalorieClassifier.load(
+            checkpoint_dir / "final_ordinal_multitask_model.pth"
+        )
         image = an_image()
         first = clf.predict(image)
         second = clf.predict(image)
