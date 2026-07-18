@@ -126,6 +126,37 @@ augmentation happened to cover the leak.
 Raw numbers: `reports/leakage_rigorous.json` (20 cells) and `reports/leakage_seed*.json` (the
 first, confounded experiment, kept for the record).
 
+## Evaluation (the Week 12 deliverables)
+
+`python experiments/evaluate.py` trains `CalorieCNN` on the clean session-grouped split and writes
+the full evaluation Ru asked for — on my own pipeline, so it does **not** depend on the group's
+Kaggle weights. Latest run, on the held-out clean test (650 dishes, session-disjoint):
+
+| Class | Precision | Recall | Specificity | F1 | AUC | Support |
+|---|---|---|---|---|---|---|
+| Low | 0.854 | 0.768 | 0.933 | 0.809 | 0.954 | 220 |
+| Medium | 0.588 | 0.668 | 0.784 | 0.626 | 0.827 | 205 |
+| High | 0.813 | 0.791 | 0.904 | 0.802 | 0.939 | 225 |
+
+**Accuracy 74.5%** (2.2× the 33.8% majority baseline) · **Macro-F1 0.745**.
+
+Two things worth a slide each:
+
+**Medium is the hard class, and that's expected.** Low (F1 0.81, AUC 0.95) and High (F1 0.80, AUC
+0.94) are cleanly separable; Medium (F1 0.63, AUC 0.83) is not — it's bounded on both sides and
+leaks to both neighbours. This is the honest reason a single accuracy number is misleading here,
+and exactly why the checklist asks for per-class metrics.
+
+**The ordinal head works — the maximal error almost never happens.** Low↔High confusion is 0% and
+1% in the matrix; the off-by-two rate is **0.3%**. Nearly every mistake is between adjacent
+classes. That is the payoff of the ordinal design over a plain 3-way softmax, and it's a claim you
+can point at rather than assert.
+
+![confusion matrix](reports/figures/confusion_matrix.png)
+![ROC curves](reports/figures/roc_curves.png)
+
+Full numbers in `reports/evaluation.json` / `reports/evaluation.md`.
+
 ## The model
 
 `CalorieCNN` ([src/models/cnn.py](src/models/cnn.py)) — built for this dataset, with three
@@ -153,6 +184,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Point at the extracted Nutrition5k archive (the dir with dish_nutrition_values.csv + imagery/)
+
+# The evaluation deliverables — confusion matrix, ROC, per-class metrics on the clean split:
+python experiments/evaluate.py --data-root ~/Downloads/archive
 
 # The airtight experiment — 5 seeds x 2 architectures x 2 splits, common clean test:
 python experiments/leakage_rigorous.py --data-root ~/Downloads/archive
