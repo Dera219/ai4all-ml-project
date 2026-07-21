@@ -15,6 +15,9 @@ the README shows that too, because that's the honest record.
 
 ## The finding
 
+> **Full write-up:** [docs/session-leakage-nutrition5k.md](docs/session-leakage-nutrition5k.md)
+> — the complete methodology, results, limitations, and reproduction commands in one document.
+
 The group verified there is **zero `dish_id` overlap** between train, validation, and test. That
 check is correct, and under it the split looks clean.
 
@@ -28,8 +31,8 @@ table, same lighting, same camera pose, same prep batch. Those dishes are not in
 Under the group's stratified-random split:
 
 - `dish_id` overlap between train and test: **0** ✓ (the check they ran)
-- test dishes that share a capture session with a training dish: **93.6%** ✗ (the check they didn't)
-- fraction of label variance explained by session identity alone: **~24%**
+- test dishes that share a capture session with a training dish: **94.7%** ✗ (the check they didn't)
+- fraction of label variance explained by session identity alone: **25.4%**
 
 The *risk* this creates: a model can score well by learning "this is session 214's lighting, and
 session 214 is Medium" without learning anything about food — correlated images, not identical
@@ -52,7 +55,7 @@ reporting where the first misled me, because that's the honest record.
 |---|---|---|
 | `dish_id` overlap, train↔test | 0 | 0 |
 | **test dishes sharing a session with train** | **94.7%** | **0%** |
-| label variance explained by session alone | ~24% | — |
+| label variance explained by session alone | 25.4% | — |
 
 The random split — what the group used, the one that passes a `dish_id` overlap check — leaks
 94.7% of its test set through shared capture sessions. This stands regardless of any model.

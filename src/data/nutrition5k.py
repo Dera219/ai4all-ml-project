@@ -7,8 +7,8 @@ consecutive `dish_id` timestamps is **41 seconds**, and **96.9% of dishes sit in
 other dishes**. Same table, same lighting, same camera pose, same prep batch.
 
 `dish_id` is unique per dish, so a stratified random split shows **zero dish_id overlap** and
-looks clean. It isn't. Under that split, **93.6% of test dishes share a capture session with a
-training dish**, and session identity alone explains ~24% of label variance. The model can score
+looks clean. It isn't. Under that split, **94.7% of test dishes share a capture session with a
+training dish**, and session identity alone explains ~25% of label variance. The model can score
 well by recognizing "this is the lighting from session 214, and session 214 dishes are Medium"
 without learning anything about food.
 
