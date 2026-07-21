@@ -1,5 +1,14 @@
 # Exporting the trained weights
 
+> **RESOLVED (July 2026).** The weights in `models/` no longer come from the group notebook at
+> all. They were produced by a self-owned Kaggle kernel
+> (`chideraonyebu/nutrition5k-clean-training`) that trains the same architecture on this repo's
+> **session-grouped, leak-free split** using this repo's `src/` as the single source of truth.
+> Result: **test accuracy 0.7423**, evaluated once, best-val weights. To reproduce or retrain:
+> push the kernel again and download `final_ordinal_multitask_model.pth` +
+> `regression_target_scaler.pkl` from its output into `models/`.
+> The document below is kept for the record of the original problem.
+
 ## The problem, stated plainly
 
 **The trained model does not exist anywhere except a Kaggle session that has probably already
