@@ -55,23 +55,34 @@ See `EXPORT_WEIGHTS.md` for the full procedure.
 
 def render_honest_caveats(metadata: dict) -> None:
     test_acc = metadata.get("test_accuracy")
+    split = str(metadata.get("split", ""))
+    if "session-grouped" in split:
+        provenance = f"""
+**Reported test accuracy: {test_acc:.1%}** against a 33.3% random baseline on three balanced
+classes — roughly 2.2x baseline.
+
+**This number is clean by construction.** The loaded checkpoint was trained on a
+**session-grouped split**: dishes photographed in the same capture session (same table, same
+lighting, same camera pose) land entirely in train, or entirely in val, or entirely in test.
+A random split passes the obvious dish-ID overlap check but leaks at the session level, and a
+controlled 5-seed, 2-architecture experiment in this repo showed that inflates reported
+accuracy by ~3 points. Model selection used validation only; the test set was evaluated
+**exactly once**, at the end, with best-validation weights.
+"""
+    else:
+        provenance = f"""
+**Reported test accuracy: {test_acc:.1%}** against a 33.3% random baseline on three balanced
+classes.
+
+**But treat it as optimistic, not as a clean held-out estimate.** This checkpoint comes from
+the group notebooks, where the test set was evaluated against repeatedly while the
+architecture was being iterated — once you keep the changes that improved the test number,
+you have selected on it, and it no longer measures generalization.
+"""
     with st.expander("How much should you trust this? (read before demoing)", expanded=False):
         st.markdown(
-            f"""
-**Reported test accuracy: {test_acc:.1%}** against a 33.3% random baseline on three balanced
-classes. That is a real result — roughly 2.2x baseline.
-
-**But treat it as optimistic, not as a clean held-out estimate.** The test set was evaluated
-against repeatedly while the architecture was being iterated (accuracies of 66.9%, 70.0%, 71.3%,
-71.5%, 72.3% appear across the notebooks before this model's 74.1%). Once you have looked at the
-test set several times and kept the change that improved it, you have selected on it, and it is
-no longer measuring generalization. The honest framing is *"we improved against the test set
-across iterations, so the true out-of-sample number is likely lower."*
-
-**What was verified clean:** `dish-level-data-leakage-check.ipynb` confirms 0 `dish_id` overlap
-between train/val/test. Since each dish has exactly one overhead RGB image, the split is sound at
-the dish level.
-
+            provenance
+            + """
 **Where it will be least accurate:** Nutrition5k was captured in a controlled setting with a
 specific culinary range and a fixed overhead camera. Photos from a phone at an angle, in
 different lighting, of cuisines the dataset under-represents — all fall outside what the model
@@ -131,6 +142,22 @@ def main() -> None:
         f"Class = number of thresholds passed. {CLASS_NAMES[0]}=[0,0], "
         f"{CLASS_NAMES[1]}=[1,0], {CLASS_NAMES[2]}=[1,1]."
     )
+
+    with st.expander("Where is the model looking? (Grad-CAM)", expanded=False):
+        with st.spinner("Computing gradient heatmaps..."):
+            from src.models.gradcam import explain
+
+            explanations = explain(classifier.model, image)
+        cols = st.columns(len(explanations))
+        for col, (label, heat_img) in zip(cols, explanations, strict=True):
+            col.image(heat_img, caption=label, use_container_width=True)
+        st.caption(
+            "Grad-CAM: gradient-weighted evidence for each ordinal threshold, over the last "
+            "conv block. Bright regions pushed that threshold's logit up. Read it as a "
+            "diagnostic, not proof of reasoning — heat on the plate is what you want to see; "
+            "heat on the table edge or shadows means the model is reading the scene, not "
+            "the food."
+        )
 
     if prediction.nutrition is not None:
         st.markdown("**Auxiliary regression estimates**")
