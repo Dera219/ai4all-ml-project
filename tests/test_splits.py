@@ -272,13 +272,38 @@ class TestOfficialStrategy:
         with pytest.raises(ValueError, match="official split left one side empty"):
             n5k.train_val_split(pool, strategy="official", seed=0)
 
-    def test_ids_are_read_from_cache_without_network(self, tmp_path) -> None:
+    def test_vendored_copy_resolves_without_network_or_cache(self) -> None:
+        """The checked-in lists are the primary source — a Kaggle kernel has no internet."""
         from src.data.nutrition5k import official_split_ids
 
+        out = official_split_ids(cache_dir="/nonexistent-on-purpose")
+        assert len(out["train"]) == 4059
+        assert len(out["test"]) == 709
+        assert not (out["train"] & out["test"])
+
+    def test_search_directories_are_consulted(self, tmp_path, monkeypatch) -> None:
+        """Kaggle mounts the code dataset at an unpredictable path, so callers pass candidates."""
+        from src.data import nutrition5k as n5k
+
+        monkeypatch.setattr(n5k, "VENDORED_SPLITS", tmp_path / "absent")
+        d = tmp_path / "mounted"
+        d.mkdir()
+        (d / "rgb_train_ids.txt").write_text("dish_1\ndish_2\n\n")
+        (d / "rgb_test_ids.txt").write_text("dish_3\n")
+
+        out = n5k.official_split_ids(cache_dir="/nonexistent-on-purpose", search=[d])
+        assert out == {"train": {"dish_1", "dish_2"}, "test": {"dish_3"}}
+
+    def test_falls_back_to_cache_when_nothing_vendored(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from src.data import nutrition5k as n5k
+
+        monkeypatch.setattr(n5k, "VENDORED_SPLITS", tmp_path / "absent")
         cache = tmp_path / "official_splits"
         cache.mkdir()
-        (cache / "rgb_train_ids.txt").write_text("dish_1\ndish_2\n\n")
-        (cache / "rgb_test_ids.txt").write_text("dish_3\n")
+        (cache / "rgb_train_ids.txt").write_text("dish_9\n")
+        (cache / "rgb_test_ids.txt").write_text("dish_8\n")
 
-        out = official_split_ids(cache_dir=tmp_path)
-        assert out == {"train": {"dish_1", "dish_2"}, "test": {"dish_3"}}
+        out = n5k.official_split_ids(cache_dir=tmp_path)
+        assert out == {"train": {"dish_9"}, "test": {"dish_8"}}

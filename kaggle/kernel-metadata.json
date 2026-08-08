@@ -1,0 +1,19 @@
+{
+  "id": "chideraonyebu/nutrition5k-leakage-three-arms",
+  "title": "nutrition5k-leakage-three-arms",
+  "code_file": "leakage-three-arms.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [
+    "gillesokhin/nutrition5k-dataset",
+    "chideraonyebu/nutrition5k-clean-code"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": []
+}

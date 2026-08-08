@@ -359,23 +359,48 @@ OFFICIAL_SPLIT_BASE = (
 )
 
 
-def official_split_ids(*, cache_dir: Path | str = ".cache") -> dict[str, set[str]]:
-    """The official RGB train/test dish IDs, fetched once and cached on disk.
+#: Vendored copies of the official lists. Checked in because they are ~100 KB, immutable, and
+#: the environment this experiment actually runs in (a Kaggle kernel) has no internet.
+VENDORED_SPLITS = Path(__file__).resolve().parents[2] / "data" / "official_splits"
 
-    Returned as sets so membership tests are cheap. Cached because the experiment calls this
-    once per cell and a network round-trip per cell would be both slow and a silent dependency
-    on connectivity partway through a training run.
+
+def official_split_ids(
+    *, cache_dir: Path | str = ".cache", search: list[Path] | None = None
+) -> dict[str, set[str]]:
+    """The official RGB train/test dish IDs.
+
+    Resolution order, offline-first: the vendored copy in `data/official_splits/`, then any
+    extra directories in `search` (Kaggle mounts the code dataset somewhere unpredictable, so
+    the caller passes candidates), then a `.cache/` copy, then — only if none of those exist —
+    the network. A training run should never discover halfway through that it needed the
+    internet.
+
+    Returned as sets so membership tests are cheap.
     """
+    names = {side: f"rgb_{side}_ids.txt" for side in ("train", "test")}
     cache = Path(cache_dir) / "official_splits"
+
+    for directory in [VENDORED_SPLITS, *(search or []), cache]:
+        if all((directory / n).exists() for n in names.values()):
+            return {
+                side: {
+                    line.strip()
+                    for line in (directory / name).read_text().splitlines()
+                    if line.strip()
+                }
+                for side, name in names.items()
+            }
+
     cache.mkdir(parents=True, exist_ok=True)
     out: dict[str, set[str]] = {}
-    for side in ("train", "test"):
-        local = cache / f"rgb_{side}_ids.txt"
+    for side, name in names.items():
+        local = cache / name
         if not local.exists():
             import urllib.request
 
-            url = f"{OFFICIAL_SPLIT_BASE}/rgb_{side}_ids.txt"
-            with urllib.request.urlopen(url, timeout=60) as r:  # noqa: S310 — https literal
+            with urllib.request.urlopen(  # noqa: S310 — https literal above
+                f"{OFFICIAL_SPLIT_BASE}/{name}", timeout=60
+            ) as r:
                 local.write_bytes(r.read())
         out[side] = {
             line.strip() for line in local.read_text().splitlines() if line.strip()
