@@ -1,0 +1,73 @@
+{
+  "source": "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/dish_ids/splits",
+  "scopes": {
+    "official_all": {
+      "dishes": 4768,
+      "test_dishes": 709,
+      "by_gap": [
+        {
+          "gap_seconds": 60,
+          "sessions": 1719,
+          "test_dishes": 709,
+          "contaminated": 157,
+          "contaminated_pct": 22.1
+        },
+        {
+          "gap_seconds": 120,
+          "sessions": 960,
+          "test_dishes": 709,
+          "contaminated": 356,
+          "contaminated_pct": 50.2
+        },
+        {
+          "gap_seconds": 300,
+          "sessions": 597,
+          "test_dishes": 709,
+          "contaminated": 528,
+          "contaminated_pct": 74.5
+        },
+        {
+          "gap_seconds": 600,
+          "sessions": 424,
+          "test_dishes": 709,
+          "contaminated": 626,
+          "contaminated_pct": 88.3
+        }
+      ]
+    },
+    "rgb_manifest": {
+      "dishes": 3239,
+      "test_dishes": 502,
+      "by_gap": [
+        {
+          "gap_seconds": 60,
+          "sessions": 1140,
+          "test_dishes": 502,
+          "contaminated": 47,
+          "contaminated_pct": 9.4
+        },
+        {
+          "gap_seconds": 120,
+          "sessions": 752,
+          "test_dishes": 502,
+          "contaminated": 174,
+          "contaminated_pct": 34.7
+        },
+        {
+          "gap_seconds": 300,
+          "sessions": 511,
+          "test_dishes": 502,
+          "contaminated": 333,
+          "contaminated_pct": 66.3
+        },
+        {
+          "gap_seconds": 600,
+          "sessions": 368,
+          "test_dishes": 502,
+          "contaminated": 425,
+          "contaminated_pct": 84.7
+        }
+      ]
+    }
+  }
+}

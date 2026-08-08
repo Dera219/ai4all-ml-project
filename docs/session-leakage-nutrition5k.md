@@ -17,6 +17,11 @@ in 2 of 10). The effect is **architecture-independent**: it comes from the conta
 *validation* set rewarding the wrong checkpoint, not from any particular model memorizing images.
 The fix costs one line: group the split by capture session.
 
+The dataset's own split files help but do not close it — they group *incremental scans of one
+plate*, and under them **34.7%** of the same test dishes still share a session with training
+data. The practical advice is therefore two-part: use the shipped splits instead of
+`train_test_split`, and group by session on top of them.
+
 ## Background
 
 [Nutrition5k](https://github.com/google-research-datasets/Nutrition5k) (Thames et al., CVPR
@@ -30,6 +35,16 @@ accuracy.
 The natural integrity check is: *does any dish appear in both train and test?* Each `dish_id`
 is unique and each dish has one overhead image, so this check passes with zero overlap, and the
 split gets called clean. Our group ran exactly this check. It passed.
+
+**The dataset authors anticipated a version of this.** Nutrition5k ships train/test files under
+`dish_ids/splits/`, and the README states that "all incremental scans that compose a unique
+plate are held within the same split, to avoid overlap between the train and test splits."
+Dishes are built up incrementally — one plate photographed again after each ingredient is added
+— so those scans are near-duplicates, and the official split keeps them together. That is a real
+safeguard and it is not what this write-up rediscovers. The question this write-up asks is what
+happens one level coarser: a *plate* is not a *session*, and rolling your own random split
+discards even the plate-level protection. Both parts are measured below —
+[what the official split does and doesn't fix](#does-the-official-split-fix-it).
 
 ## The flaw
 
@@ -115,10 +130,52 @@ evaluated exactly once with best-validation weights): **74.2% test accuracy** ag
 random baseline — roughly the same headline as the leaky pipeline reports, but this one means
 what it says.
 
+## Does the official split fix it?
+
+Partly. Since the dataset ships grouped splits, the useful question is not "is leakage possible"
+but "how much survives if you use the files provided." Contamination is arithmetic on the ID
+timestamps — no images needed — so this is cheap to answer directly
+([`experiments/official_split_check.py`](../experiments/official_split_check.py), which fetches
+the official lists over HTTPS and needs nothing downloaded):
+
+| Split, evaluated on the same 3,239-dish RGB manifest | Test dishes sharing a capture session with a training dish |
+|---|---|
+| Stratified random dish-level split (seed 42) — what our group used | **94.7%** |
+| **Nutrition5k official `rgb_train/test_ids`** | **34.7%** |
+
+Two conclusions, and they point in opposite directions:
+
+**The official split helps a lot.** Rolling your own random split nearly triples session
+contamination. If you take one thing from this document, take that: *use the shipped split
+files.* Most public Nutrition5k notebooks, ours included, call `train_test_split` on the
+manifest and never look at `dish_ids/splits/` at all.
+
+**It does not close the gap.** A third of the official test set still shares a capture session
+with training data, because the official unit is the plate and the leak lives at the session.
+Two different plates photographed four minutes apart on the same table, under the same lights,
+can legitimately land on opposite sides of the official split — they are different plates, which
+is all the documented guarantee promises.
+
+The absolute figure moves with the session threshold, so it should never be quoted without one:
+
+| Session gap threshold | Official split, same 3,239-dish manifest |
+|---|---|
+| 60s | 9.4% |
+| **120s** (used throughout) | **34.7%** |
+| 300s | 66.3% |
+| 600s | 84.7% |
+
+The specific percentage is a function of where you draw the session boundary, so the honest
+presentation is the sweep rather than the single most striking row. The random-split figure is
+reported at 120s only — reproducing it at other thresholds needs the calorie labels the
+stratification depends on, and it is not quoted here at any threshold it was not measured at.
+
 ## What to do about it
 
-**If you use Nutrition5k:** derive sessions from the `dish_id` timestamps and use a grouped
-split ([`src/data/nutrition5k.py`](../src/data/nutrition5k.py) implements it; scikit-learn's
+**If you use Nutrition5k:** start from the official split files under `dish_ids/splits/` rather
+than `train_test_split` — that alone removes most of the contamination. To close the rest, derive
+sessions from the `dish_id` timestamps and group by them
+([`src/data/nutrition5k.py`](../src/data/nutrition5k.py) implements it; scikit-learn's
 `GroupShuffleSplit` also works). It is one line of difference and it changes what your test
 number measures.
 
@@ -147,6 +204,14 @@ measured, controlled instance of it in a widely used dataset, with the mechanism
   versus-train-set figure and pin the method in code.
 - One dataset, one task. The mechanism (correlated capture ⇒ contaminated validation ⇒
   inflated selection) is general; the +3.3pt magnitude is specific to this setup.
+- The official-split comparison measures **contamination**, not downstream accuracy. It shows
+  that 34.7% of official test dishes are session-contaminated; it does not establish how much
+  that inflates a model trained on the official split. That would need the 20-cell experiment
+  re-run with the official partition, which is the obvious next step and is not done here.
+- Session membership is inferred from ID timestamps, not recorded ground truth. The dataset
+  publishes no session field, so every session figure in this document — mine and the official
+  split's alike — is a reconstruction. It is applied identically to both, so the comparison is
+  fair even where the absolute number is uncertain.
 
 ## Reproducing
 
@@ -169,6 +234,11 @@ PY
 
 # the 20-cell controlled experiment (writes reports/leakage_rigorous.json)
 python experiments/leakage_rigorous.py --data-root <dataset-root>
+
+# the official-split comparison (34.7% and the threshold sweep).
+# Needs no dataset download — it fetches the official ID lists and does arithmetic on the
+# timestamps. Uses .cache/dish_ids_*.npy to restrict to this project's manifest if present.
+python experiments/official_split_check.py     # writes reports/official_split_check.json
 ```
 
 ## References
