@@ -5,43 +5,63 @@ https://www.kaggle.com/datasets/gillesokhin/nutrition5k-dataset/discussion  → 
 Title goes in the title field; everything below the rule is the body (Kaggle renders Markdown).
 -->
 
-**Title:** Heads-up: a random dish-level split leaks — 94.7% of test dishes share a capture session with training dishes
+**Title:** Nutrition5k ships official train/test splits — most notebooks ignore them, and even they leave 34.7% session leakage
 
 ---
 
-If you're splitting this dataset randomly at the dish level and checking for `dish_id` overlap
-between train and test, that check passes and the split still leaks. I measured how much, and
-wanted to leave it here since this dataset gets used for a lot of calorie-estimation projects.
+Two things about splitting this dataset that cost me real accuracy points, in case they save
+someone else the trouble.
 
-**What's going on.** `dish_id` is `dish_<unix_timestamp>`. Sort by ID and the capture process
-shows up: the median gap between consecutive dishes is **41 seconds**. Dishes were photographed
-in batches — same table, same lighting, same camera pose, plate after plate in one sitting.
-Treating a gap over 120 seconds as a session boundary (results aren't sensitive to the exact
-threshold):
+**1. The dataset ships official splits, and almost nobody uses them.**
 
-| Statistic (raw data, RGB manifest, n = 3,241) | Value |
+Nutrition5k publishes train/test ID lists at `dish_ids/splits/` in the GCS bucket, and the
+README explains why they exist: *"All incremental scans that compose a unique plate are held
+within the same split, to avoid overlap between the train and test splits."* Dishes here are
+built up incrementally — the same plate re-photographed after each ingredient is added — so
+those scans are near-duplicates, and the official split deliberately keeps them together.
+
+Nearly every public notebook on this dataset, mine included, called `train_test_split` on the
+manifest and never opened that directory. If you do that, you throw away a protection the
+authors built for you.
+
+**2. Grouping by *plate* isn't the same as grouping by *session*.**
+
+`dish_id` is `dish_<unix_timestamp>`. Sort by ID and the capture process appears: the median gap
+between consecutive dishes is **41 seconds**. Plates were photographed in batches — same table,
+same lights, same camera pose, one sitting. Two *different* plates four minutes apart share all
+of that, and the official grouping doesn't cover them, because they are genuinely different
+plates.
+
+Measured on the same 3,239-dish RGB manifest, treating a >120s gap as a session boundary:
+
+| Split | Test dishes sharing a capture session with a training dish |
 |---|---|
-| Dishes in a session containing other dishes | 96.9% |
-| Test dishes sharing a session with a *training* dish (stratified random split, seed 42) | **94.7%** |
-| Calorie-tertile label variance explained by session identity alone | 25.4% |
+| Stratified random dish-level split (seed 42) | **94.7%** |
+| Official `rgb_train_ids` / `rgb_test_ids` | **34.7%** |
 
-That last row is the mechanism. Dishes in one session came from the same meal service, so their
-calorie labels correlate — and their pixels correlate through lighting, background, and camera
-pose. A model can raise its score by learning "this is session 214's lighting, and session 214
-ran heavy" without learning anything about food. The images aren't duplicated, they're
-*correlated*, which is exactly what a dish-ID overlap check cannot see.
+So the shipped files remove most of it and not all of it.
 
-**How much it costs.** 5 seeds × 2 architectures, all evaluated against one common
-session-disjoint test set. Selecting the checkpoint on the session-contaminated split overstated
-true accuracy by **+3.3 points on average, positive in 10 of 10 runs**. Selecting on a
-session-grouped split tracked truth (−0.8, positive in 2 of 10). It's architecture-independent —
-the damage comes from a contaminated *validation* set rewarding the wrong checkpoint, not from a
-particular model memorizing images. So it will show up in your numbers whatever backbone you use.
+The absolute number depends on where you draw the session boundary, so here's the sweep rather
+than just the most striking row — official split: 9.4% at 60s, 34.7% at 120s, 66.3% at 300s,
+84.7% at 600s.
 
-**The fix is one line** — group the split by session instead of splitting dishes independently:
+**Why it matters.** Session identity alone explains **25.4%** of calorie-tertile label variance.
+Dishes in one session came from the same meal service, so their labels correlate — and their
+pixels correlate through lighting, background, and pose. A model can raise its score by learning
+"this is session 214's lighting, and session 214 ran heavy." The images aren't duplicated,
+they're *correlated*, which is exactly what a `dish_id` overlap check cannot see.
+
+**What it costs.** 5 seeds × 2 architectures, every model scored on one common session-disjoint
+test set. Selecting the checkpoint on a session-contaminated split overstated true accuracy by
+**+3.3 points on average, positive in 10 of 10 runs**; selecting on a session-grouped split
+tracked truth (−0.8, positive in 2 of 10). It's architecture-independent — the damage is a
+contaminated *validation* set rewarding the wrong checkpoint, not a particular model memorizing
+images — so it shows up whatever backbone you use.
+
+**What I'd suggest.** Start from the official split files. Then group by session on top:
 
 ```python
-# session id: start a new session when the gap to the previous dish exceeds 120s
+# session id: new session when the gap to the previous dish exceeds 120s
 ts = df.dish_id.str.removeprefix("dish_").astype(int).sort_values()
 session = (ts.diff() > 120).cumsum()
 
@@ -54,10 +74,20 @@ train_idx, test_idx = next(
 Your accuracy will go *down*. That's the point — the lower number is the one that survives
 contact with a photo taken in a different room.
 
-Full write-up with methodology, the limitations, and reproduction commands:
+**Check the 34.7% yourself in about ten seconds.** It needs no images and no download — dish IDs
+carry the timestamps, so it's arithmetic on the official ID lists:
+https://github.com/Dera219/ai4all-ml-project/blob/main/experiments/official_split_check.py
+
+Full write-up — methodology, limitations, reproduction commands:
 https://github.com/Dera219/ai4all-ml-project/blob/main/docs/session-leakage-nutrition5k.md
 
-One thing worth flagging honestly: my first attempt at measuring this was confounded — I compared
-a leaky test set against a *different* clean one, so "how much does leakage inflate scores" got
-mixed up with "which dishes are harder," and it reached the wrong conclusion. The write-up shows
-that detour too. If you spot a hole in the corrected design I'd genuinely like to hear it.
+Two honest caveats. The 34.7% measures **contamination, not accuracy** — I haven't re-run the
+controlled experiment on the official partition, so I can't tell you how many points it costs
+there, only that the contamination is present. And sessions are **inferred from timestamps**,
+not recorded; the dataset publishes no session field, so every session number here is a
+reconstruction, applied identically to both splits.
+
+Also worth flagging: my first attempt at measuring the effect was confounded — I compared a
+leaky test set against a *different* clean one, mixing "how much does leakage inflate scores"
+with "which dishes are harder," and it reached the wrong conclusion. The write-up shows that
+detour too. If you spot a hole in the corrected design I'd genuinely like to hear it.
