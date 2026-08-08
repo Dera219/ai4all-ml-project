@@ -76,7 +76,13 @@ from src.data.nutrition5k import official_split_ids  # noqa: E402
 # Fail fast and loudly if the split lists didn't travel — the alternative is discovering it
 # ten cells into a GPU run, or worse, silently falling through to a network call that can't
 # succeed with internet off.
+# Discover the split lists by marker rather than by assumed path — Kaggle has changed mount
+# layouts before, and the relative-path guess is the one thing here that would fail silently.
 _search = [_REPO_ROOT / "data" / "official_splits", _PKG / "data" / "official_splits"]
+try:
+    _search.insert(0, _find("official_splits/rgb_train_ids.txt").parent)
+except FileNotFoundError:
+    pass
 _ids = official_split_ids(search=_search)
 assert len(_ids["train"]) == 4059 and len(_ids["test"]) == 709, (
     f"official split lists look wrong: train={len(_ids['train'])} test={len(_ids['test'])}"
