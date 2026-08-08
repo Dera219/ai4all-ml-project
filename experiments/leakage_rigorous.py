@@ -16,9 +16,14 @@ Two architectures:
 - **small** — my `CalorieCNN` (~100K-param trunk, global average pooling)
 - **big** — `GroupStyleCNN`, a faithful reproduction of the group's flatten→giant-FC model
 
-Two split strategies for train/val (the pool is identical; only the partition differs):
+Three split strategies for train/val (the pool is identical; only the partition differs):
 - **leaky** — random dish-level split; val shares capture sessions with train
 - **clean** — session-grouped split; val is session-disjoint from train
+- **official** — the dataset's own `dish_ids/splits` files; val is the official-test side.
+  This is the practitioner's realistic middle case: it groups a plate's incremental scans, but
+  not whole capture sessions, so ~35% of it still shares a session with train. Its inflation
+  should land between the other two — that gap is the cost of the leakage the shipped split
+  does not cover.
 
 For each (seed, arch, strategy) we record:
 - `val_acc`  — accuracy on that split's own validation (the number you'd select on / report)
@@ -62,7 +67,7 @@ from src.training.train import evaluate, pick_device, train  # noqa: E402
 
 SEEDS = [0, 1, 2, 3, 4]
 ARCHITECTURES = ("small", "big")
-STRATEGIES = ("leaky", "clean")
+STRATEGIES = ("leaky", "clean", "official")
 
 
 def seed_everything(seed: int) -> None:
@@ -215,7 +220,7 @@ def main() -> None:
 
     for seed in seeds:
         # Held-out clean test depends on the seed, so across seeds we sample different clean test
-        # sets — but within a seed it is common to all four (arch × strategy) cells.
+        # sets — but within a seed it is common to all six (arch × strategy) cells.
         pool, clean_test = holdout_clean_test(manifest, test_fraction=0.2, seed=seed)
         print(
             f"\nseed {seed}: pool {len(pool)} ({pool.session.nunique()} sessions) | "

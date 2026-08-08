@@ -330,7 +330,57 @@ def train_val_split(
         )
         return train, val
 
-    raise ValueError(f"strategy must be 'leaky' or 'clean', got {strategy!r}")
+    if strategy == "official":
+        # The dataset's own split, used the way a practitioner would: dishes on the official
+        # test side become validation, the rest is train. Note what this does NOT do — it never
+        # moves an official-test dish into train to hit a size target, because that would
+        # violate the very boundary being tested. Val size is therefore whatever the official
+        # assignment yields within this pool, not `val_fraction`.
+        official_test = official_split_ids()["test"]
+        is_val = pool.dish_id.isin(official_test)
+        val = pool[is_val].reset_index(drop=True)
+        train = pool[~is_val].reset_index(drop=True)
+        if val.empty or train.empty:
+            raise ValueError(
+                "the official split left one side empty for this pool — check that dish_ids "
+                "match the official lists (they cover the full dataset, not just RGB)"
+            )
+        return train, val
+
+    raise ValueError(
+        f"strategy must be 'leaky', 'clean', or 'official', got {strategy!r}"
+    )
+
+
+#: Where the dataset publishes its own split files. Documented in the Nutrition5k README, which
+#: states that all incremental scans of a unique plate are held within the same split.
+OFFICIAL_SPLIT_BASE = (
+    "https://storage.googleapis.com/nutrition5k_dataset/nutrition5k_dataset/dish_ids/splits"
+)
+
+
+def official_split_ids(*, cache_dir: Path | str = ".cache") -> dict[str, set[str]]:
+    """The official RGB train/test dish IDs, fetched once and cached on disk.
+
+    Returned as sets so membership tests are cheap. Cached because the experiment calls this
+    once per cell and a network round-trip per cell would be both slow and a silent dependency
+    on connectivity partway through a training run.
+    """
+    cache = Path(cache_dir) / "official_splits"
+    cache.mkdir(parents=True, exist_ok=True)
+    out: dict[str, set[str]] = {}
+    for side in ("train", "test"):
+        local = cache / f"rgb_{side}_ids.txt"
+        if not local.exists():
+            import urllib.request
+
+            url = f"{OFFICIAL_SPLIT_BASE}/rgb_{side}_ids.txt"
+            with urllib.request.urlopen(url, timeout=60) as r:  # noqa: S310 — https literal
+                local.write_bytes(r.read())
+        out[side] = {
+            line.strip() for line in local.read_text().splitlines() if line.strip()
+        }
+    return out
 
 
 def session_leakage_report(splits: Splits) -> dict[str, float | int]:

@@ -204,3 +204,81 @@ class TestManifestCleaning:
         real = tmp_path / "real.png"
         real.write_bytes(b"\x89PNG\r\n")
         assert _is_readable(real)
+
+
+class TestOfficialStrategy:
+    """The third arm: split by the dataset's own shipped files.
+
+    These never touch the network. `official_split_ids` is monkeypatched where the assignment
+    matters, and exercised against a pre-seeded cache where the loading itself is under test —
+    a unit test that depends on a GCS bucket is a unit test that fails on a plane.
+    """
+
+    @staticmethod
+    def _assign(pool: pd.DataFrame, val_share: float = 0.25) -> dict[str, set[str]]:
+        """Fake an official assignment: the first `val_share` of dishes are 'official test'."""
+        ids = list(pool.dish_id)
+        cut = int(len(ids) * val_share)
+        return {"test": set(ids[:cut]), "train": set(ids[cut:])}
+
+    def test_val_is_exactly_the_official_test_side(
+        self, manifest: pd.DataFrame, monkeypatch
+    ) -> None:
+        from src.data import nutrition5k as n5k
+
+        pool, _ = n5k.holdout_clean_test(manifest, seed=0)
+        assignment = self._assign(pool)
+        monkeypatch.setattr(n5k, "official_split_ids", lambda **_: assignment)
+
+        train, val = n5k.train_val_split(pool, strategy="official", seed=0)
+        assert set(val.dish_id) == assignment["test"] & set(pool.dish_id)
+        assert not (set(train.dish_id) & set(val.dish_id))
+
+    def test_no_official_test_dish_is_moved_into_train(
+        self, manifest: pd.DataFrame, monkeypatch
+    ) -> None:
+        """The boundary under test must never be crossed to hit a size target."""
+        from src.data import nutrition5k as n5k
+
+        pool, _ = n5k.holdout_clean_test(manifest, seed=0)
+        assignment = self._assign(pool)
+        monkeypatch.setattr(n5k, "official_split_ids", lambda **_: assignment)
+
+        train, _ = n5k.train_val_split(pool, strategy="official", seed=0)
+        assert not (set(train.dish_id) & assignment["test"])
+
+    def test_draws_from_the_same_pool_as_the_other_arms(
+        self, manifest: pd.DataFrame, monkeypatch
+    ) -> None:
+        from src.data import nutrition5k as n5k
+
+        pool, _ = n5k.holdout_clean_test(manifest, seed=0)
+        monkeypatch.setattr(n5k, "official_split_ids", lambda **_: self._assign(pool))
+
+        train, val = n5k.train_val_split(pool, strategy="official", seed=0)
+        assert set(train.dish_id) | set(val.dish_id) == set(pool.dish_id)
+
+    def test_empty_side_is_an_error_not_a_silent_degenerate_split(
+        self, manifest: pd.DataFrame, monkeypatch
+    ) -> None:
+        """If dish_ids don't match the official lists, fail loudly — a silently empty val
+        would train fine and report a meaningless selection number."""
+        from src.data import nutrition5k as n5k
+
+        pool, _ = n5k.holdout_clean_test(manifest, seed=0)
+        monkeypatch.setattr(
+            n5k, "official_split_ids", lambda **_: {"test": set(), "train": set()}
+        )
+        with pytest.raises(ValueError, match="official split left one side empty"):
+            n5k.train_val_split(pool, strategy="official", seed=0)
+
+    def test_ids_are_read_from_cache_without_network(self, tmp_path) -> None:
+        from src.data.nutrition5k import official_split_ids
+
+        cache = tmp_path / "official_splits"
+        cache.mkdir()
+        (cache / "rgb_train_ids.txt").write_text("dish_1\ndish_2\n\n")
+        (cache / "rgb_test_ids.txt").write_text("dish_3\n")
+
+        out = official_split_ids(cache_dir=tmp_path)
+        assert out == {"train": {"dish_1", "dish_2"}, "test": {"dish_3"}}
