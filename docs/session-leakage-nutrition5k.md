@@ -241,6 +241,15 @@ python experiments/leakage_rigorous.py --data-root <dataset-root>
 python experiments/official_split_check.py     # writes reports/official_split_check.json
 ```
 
+## Discussion
+
+A condensed version of this is posted on the dataset's Kaggle page, where the people most likely
+to hit the problem will actually see it:
+[Nutrition5k ships official train/test splits — most notebooks ignore them, and even they leave
+34.7% session leakage](https://www.kaggle.com/datasets/gillesokhin/nutrition5k-dataset/discussion/733741)
+(August 2026). Corrections and counterarguments are welcome there or as an issue on this repo —
+the limitations above are the places I'd attack first.
+
 ## References
 
 - Thames, Q., et al. *Nutrition5k: Towards Automatic Nutritional Understanding of Generic
