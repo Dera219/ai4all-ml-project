@@ -19,8 +19,14 @@ The fix costs one line: group the split by capture session.
 
 The dataset's own split files help but do not close it — they group *incremental scans of one
 plate*, and under them **34.7%** of the same test dishes still share a session with training
-data. The practical advice is therefore two-part: use the shipped splits instead of
-`train_test_split`, and group by session on top of them.
+data. That contamination has a measured cost: in a 30-cell rerun, model selection on the official
+split inflated by **+3.5pt, positive in 9 of 10 cells** — no better than the random split it was
+supposed to improve on, while the session-grouped arm sat at −0.0pt. So the advice is two-part:
+use the shipped splits instead of `train_test_split`, and group by session on top of them,
+because the shipped splits alone do not protect selection.
+
+Inflation magnitudes are hardware-dependent — identical code and seeds give +3.3pt on Apple MPS
+and +2.2pt on a Kaggle P100 — so only comparisons *within* a single run are meaningful.
 
 ## Background
 
@@ -84,13 +90,16 @@ Design ([`experiments/leakage_rigorous.py`](../experiments/leakage_rigorous.py))
 1. **One common test set per seed**, held out *session-disjoint* from everything else. Every
    arm within a seed is evaluated on the identical dishes, removing test-difficulty as a
    variable.
-2. The remaining pool is split into train/val two ways: **leaky** (dish-level random — the
-   standard practice) and **clean** (session-grouped).
+2. The remaining pool is split into train/val three ways: **leaky** (dish-level random — the
+   standard practice), **clean** (session-grouped), and **official** (the dataset's shipped
+   `dish_ids/splits` files). The official arm was added after the first two were published; its
+   results are in [What that contamination costs](#what-that-contamination-costs).
 3. Train, select the best checkpoint on validation accuracy — the universal procedure — then
    evaluate that checkpoint once on the common test set.
 4. The measured quantity is **inflation = validation accuracy − common-test accuracy**: how
    much the split's own validation score overstates the truth.
-5. Run the full grid: **5 seeds × 2 architectures × 2 split strategies = 20 training runs.**
+5. Run the full grid: **5 seeds × 2 architectures × 3 split strategies = 30 training runs**
+   (the original published run was 20, before the official arm existed).
    The two architectures bracket the design space: a small CNN with global average pooling
    (989k parameters) and a faithful reproduction of the common flatten-into-big-FC design
    (1.7M parameters). No augmentation, so the raw effect is not partially masked (augmentation
@@ -98,7 +107,8 @@ Design ([`experiments/leakage_rigorous.py`](../experiments/leakage_rigorous.py))
 
 ### Results
 
-From [`reports/leakage_rigorous.json`](../reports/leakage_rigorous.json) (20 cells):
+From [`reports/leakage_rigorous_20cell_2seed-arch.json`](../reports/leakage_rigorous_20cell_2seed-arch.json),
+the original 20-cell run (Apple MPS):
 
 | Arm | Mean inflation (val − common test) | Cells positive |
 |---|---|---|
@@ -106,6 +116,14 @@ From [`reports/leakage_rigorous.json`](../reports/leakage_rigorous.json) (20 cel
 | **Leaky split, big CNN** | **+2.4 pts** | 5 / 5 |
 | **Leaky split, combined** | **+3.3 pts** | **10 / 10** |
 | Clean split, combined | −0.8 pts | 2 / 10 |
+
+> **The magnitude is not portable across hardware; the ordering is.** Rerunning this identical
+> code, with identical seeds, on a Kaggle P100 gave leaky **+2.2pt / 9 of 10** and clean
+> **−0.0pt / 3 of 10** — same conclusion, different numbers, because floating-point and cuDNN
+> behaviour differ between backends. Any single inflation figure here should be read as "this
+> magnitude, on this hardware," and comparisons should only be made *within* one run. The
+> [three-arm table](#what-that-contamination-costs) below is internally consistent for that
+> reason: all 30 of its cells come from one machine.
 
 Three things worth stating precisely:
 
@@ -170,6 +188,36 @@ presentation is the sweep rather than the single most striking row. The random-s
 reported at 120s only — reproducing it at other thresholds needs the calorie labels the
 stratification depends on, and it is not quoted here at any threshold it was not measured at.
 
+### What that contamination costs
+
+Contamination is not damage. To find out whether 34.7% actually inflates anything, the
+controlled experiment was rerun with the official split as a third arm — 2 architectures × 3
+strategies × 5 seeds = 30 cells, every model scored on the same session-disjoint held-out test
+set ([`experiments/leakage_rigorous.py --strategies leaky clean official`](../experiments/leakage_rigorous.py)):
+
+| Train/val strategy | val size | Inflation (val − true) | Positive |
+|---|---|---|---|
+| Random dish-level split | 20% of pool | +2.2pt | 9/10 |
+| **Official `dish_ids/splits`** | 16% of pool | **+3.5pt** | **9/10** |
+| Session-grouped | 20% of pool | −0.0pt | 3/10 |
+
+**The prediction registered before this ran was wrong.** The expectation was that official would
+land between the other two — partial protection. It did not: its inflation is *at least as large*
+as the random split's, in 9 of 10 runs, and the ordering holds within both architectures
+separately (small: +3.7 official vs +3.1 leaky; big: +3.2 vs +1.3). The decision rule, also
+fixed in advance ([`experiments/summarize_arms.py`](../experiments/summarize_arms.py)), returns
+its verdict B: **the shipped split does not protect model selection.**
+
+That is the claim. A stronger one — that the official split is *worse* than a random split — is
+**not** supported here, because of a confound stated in the analysis before the numbers existed:
+official val is 16% of the pool against 20% for the other arms, since its size is fixed by the
+shipped assignment rather than chosen. A smaller validation set makes checkpoint selection
+noisier, which inflates on its own. Equalising val size would settle it; that run has not been
+done, and until it is, "no better than random" is the defensible reading and "worse" is not.
+
+Note also what this does *not* undermine: the session-grouped arm sits at −0.0pt with only 3 of
+10 positive. Whatever the official split is doing, grouping by session removes it.
+
 ## What to do about it
 
 **If you use Nutrition5k:** start from the official split files under `dish_ids/splits/` rather
@@ -204,10 +252,14 @@ measured, controlled instance of it in a widely used dataset, with the mechanism
   versus-train-set figure and pin the method in code.
 - One dataset, one task. The mechanism (correlated capture ⇒ contaminated validation ⇒
   inflated selection) is general; the +3.3pt magnitude is specific to this setup.
-- The official-split comparison measures **contamination**, not downstream accuracy. It shows
-  that 34.7% of official test dishes are session-contaminated; it does not establish how much
-  that inflates a model trained on the official split. That would need the 20-cell experiment
-  re-run with the official partition, which is the obvious next step and is not done here.
+- The official arm's validation set is 16% of the pool against 20% for the other two, because
+  its size is fixed by the shipped assignment rather than chosen. Smaller validation sets make
+  checkpoint selection noisier, which inflates independently of leakage. This is why the claim
+  is "no better than random" and not "worse than random" — equalising val size (the
+  `--val-fraction` flag exists for exactly this) would settle it, and that run has not been done.
+- Inflation magnitudes vary with hardware. Identical code and seeds gave leaky +3.3pt on Apple
+  MPS and +2.2pt on a Kaggle P100. Only within-run comparisons are meaningful; no cross-run
+  magnitude comparison is made anywhere in this document.
 - Session membership is inferred from ID timestamps, not recorded ground truth. The dataset
   publishes no session field, so every session figure in this document — mine and the official
   split's alike — is a reconstruction. It is applied identically to both, so the comparison is
