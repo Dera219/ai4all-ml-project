@@ -100,9 +100,12 @@ def run_cell(
     epochs: int,
     batch_size: int,
     device,
+    val_fraction: float = 0.2,
 ) -> dict:
     seed_everything(seed)
-    train_frame, val_frame = train_val_split(pool, strategy=strategy, seed=seed)
+    train_frame, val_frame = train_val_split(
+        pool, strategy=strategy, seed=seed, val_fraction=val_fraction
+    )
 
     # Class edges from THIS train fold only, applied to val and the common test — so no split's
     # own distribution sets the boundaries.
@@ -190,6 +193,17 @@ def main() -> None:
         "--data-root", type=Path, default=Path.home() / "Downloads/archive"
     )
     parser.add_argument("--cache", type=Path, default=Path(".cache"))
+    parser.add_argument(
+        "--val-fraction",
+        type=float,
+        default=0.2,
+        help=(
+            "Validation share for the leaky and clean arms. The official arm ignores it — its "
+            "val size is whatever the shipped assignment yields (~16%% of the pool). Set this "
+            "to 0.16 to equalise val sizes across all three arms and remove selection-noise "
+            "as an explanation for the official arm's inflation."
+        ),
+    )
     parser.add_argument("--size", type=int, default=160)
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=48)
@@ -197,6 +211,13 @@ def main() -> None:
         "--out", type=Path, default=Path("reports/leakage_rigorous.json")
     )
     parser.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
+    parser.add_argument(
+        "--strategies",
+        nargs="+",
+        default=list(STRATEGIES),
+        choices=list(STRATEGIES),
+        help="Subset of arms to run — lets a follow-up control rerun only what it needs.",
+    )
     args = parser.parse_args()
 
     seeds = args.seeds
@@ -227,7 +248,7 @@ def main() -> None:
             f"common clean test {len(clean_test)} ({clean_test.session.nunique()} sessions)"
         )
         for arch in ARCHITECTURES:
-            for strategy in STRATEGIES:
+            for strategy in args.strategies:
                 cells.append(
                     run_cell(
                         seed,
@@ -240,6 +261,7 @@ def main() -> None:
                         epochs=args.epochs,
                         batch_size=args.batch_size,
                         device=device,
+                        val_fraction=args.val_fraction,
                     )
                 )
                 # Write after every cell so a crash loses at most one training run.
