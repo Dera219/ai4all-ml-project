@@ -51,12 +51,20 @@ pixels correlate through lighting, background, and pose. A model can raise its s
 "this is session 214's lighting, and session 214 ran heavy." The images aren't duplicated,
 they're *correlated*, which is exactly what a `dish_id` overlap check cannot see.
 
-**What it costs.** 5 seeds × 2 architectures, every model scored on one common session-disjoint
-test set. Selecting the checkpoint on a session-contaminated split overstated true accuracy by
-**+3.3 points on average, positive in 10 of 10 runs**; selecting on a session-grouped split
-tracked truth (−0.8, positive in 2 of 10). It's architecture-independent — the damage is a
-contaminated *validation* set rewarding the wrong checkpoint, not a particular model memorizing
-images — so it shows up whatever backbone you use.
+**What it costs.** 5 seeds × 2 architectures × 3 split strategies = 30 training runs, every
+model scored on one common session-disjoint test set. Inflation is validation accuracy minus
+true accuracy — how much the split's own number overstates reality:
+
+| Train/val split | Inflation | Positive |
+|---|---|---|
+| Random dish-level | +2.2pt | 9/10 |
+| **Official `dish_ids/splits`** | **+3.5pt** | **9/10** |
+| Session-grouped | −0.0pt | 3/10 |
+
+I expected the official split to land between the other two. It didn't — its inflation is at
+least as large as the random split's, and the ordering holds within both architectures
+separately. The damage is a contaminated *validation* set rewarding the wrong checkpoint, not a
+particular model memorizing images, so it shows up whatever backbone you use.
 
 **What I'd suggest.** Start from the official split files. Then group by session on top:
 
@@ -81,11 +89,19 @@ https://github.com/Dera219/ai4all-ml-project/blob/main/experiments/official_spli
 Full write-up — methodology, limitations, reproduction commands:
 https://github.com/Dera219/ai4all-ml-project/blob/main/docs/session-leakage-nutrition5k.md
 
-Two honest caveats. The 34.7% measures **contamination, not accuracy** — I haven't re-run the
-controlled experiment on the official partition, so I can't tell you how many points it costs
-there, only that the contamination is present. And sessions are **inferred from timestamps**,
-not recorded; the dataset publishes no session field, so every session number here is a
-reconstruction, applied identically to both splits.
+Three honest caveats, because two of these could change how you read the table.
+
+**I am not claiming the official split is worse than random.** Its validation set is 16% of the
+pool against 20% for the other arms — its size is fixed by the shipped assignment, not chosen —
+and a smaller validation set makes checkpoint selection noisier all on its own. That confound is
+uncontrolled. "No better than random" is what the data supports; "worse" is not.
+
+**Inflation magnitude is hardware-dependent.** The same code and seeds give +3.3pt on Apple MPS
+and +2.2pt on the Kaggle P100 these numbers came from. Only comparisons *within* one run mean
+anything — which is why all 30 cells above come from a single machine.
+
+**Sessions are inferred from timestamps, not recorded.** The dataset publishes no session field,
+so every session number here is a reconstruction, applied identically to all three arms.
 
 Also worth flagging: my first attempt at measuring the effect was confounded — I compared a
 leaky test set against a *different* clean one, mixing "how much does leakage inflate scores"
