@@ -26,7 +26,8 @@ authors built for you.
 
 **2. Grouping by *plate* isn't the same as grouping by *session*.**
 
-`dish_id` is `dish_<unix_timestamp>`. Sort by ID and the capture process appears: the median gap
+`dish_id` is literally the string `dish_` followed by a unix timestamp. Sort by ID and the
+capture process appears: the median gap
 between consecutive dishes is **41 seconds**. Plates were photographed in batches — same table,
 same lights, same camera pose, one sitting. Two *different* plates four minutes apart share all
 of that, and the official grouping doesn't cover them, because they are genuinely different
