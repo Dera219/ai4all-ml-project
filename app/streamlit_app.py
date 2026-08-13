@@ -8,6 +8,7 @@ uploaded food photo as Low / Medium / High calorie.
 
 from __future__ import annotations
 
+import pickle
 import sys
 from pathlib import Path
 
@@ -26,16 +27,29 @@ st.set_page_config(page_title="Food Calorie Classifier", page_icon="🍽️", la
 
 
 @st.cache_resource
-def load_model() -> CalorieClassifier | None:
-    """Cached so the checkpoint is read once, not on every interaction."""
+def load_model() -> tuple[CalorieClassifier | None, str | None]:
+    """Cached so the checkpoint is read once, not on every interaction.
+
+    Returns `(classifier, error_kind)` where `error_kind` is None on success, "missing" when the
+    weights are absent or not the packaged checkpoint, and "corrupt" when torch.load chokes on a
+    truncated or damaged file (RuntimeError / UnpicklingError / EOFError).
+    """
     try:
-        return CalorieClassifier.load(CHECKPOINT, SCALER)
+        return CalorieClassifier.load(CHECKPOINT, SCALER), None
     except (FileNotFoundError, ValueError):
-        return None
+        return None, "missing"
+    except (RuntimeError, EOFError, pickle.UnpicklingError):
+        return None, "corrupt"
 
 
-def render_missing_weights() -> None:
-    st.error("Model weights not found — the app cannot make predictions.")
+def render_missing_weights(error_kind: str | None = None) -> None:
+    if error_kind == "corrupt":
+        st.error(
+            "Model checkpoint appears corrupt or truncated — it exists but could not be "
+            "loaded, so the app cannot make predictions. Re-download it and try again."
+        )
+    else:
+        st.error("Model weights not found — the app cannot make predictions.")
     st.markdown(
         f"""
 The trained weights are **not in this repository**. They were written to `/kaggle/working/`
@@ -55,10 +69,17 @@ See `EXPORT_WEIGHTS.md` for the full procedure.
 
 def render_honest_caveats(metadata: dict) -> None:
     test_acc = metadata.get("test_accuracy")
+    # A checkpoint can pass validation yet omit this key; a bare number formatted with :.1%
+    # would then TypeError. Degrade to "n/a" instead of stack-tracing.
+    acc_text = (
+        f"{test_acc:.1%}"
+        if isinstance(test_acc, (int, float)) and not isinstance(test_acc, bool)
+        else "n/a (not recorded in checkpoint metadata)"
+    )
     split = str(metadata.get("split", ""))
     if "session-grouped" in split:
         provenance = f"""
-**Reported test accuracy: {test_acc:.1%}** against a 33.3% random baseline on three balanced
+**Reported test accuracy: {acc_text}** against a 33.3% random baseline on three balanced
 classes — roughly 2.2x baseline.
 
 **This number is clean by construction.** The loaded checkpoint was trained on a
@@ -71,7 +92,7 @@ accuracy by ~3 points. Model selection used validation only; the test set was ev
 """
     else:
         provenance = f"""
-**Reported test accuracy: {test_acc:.1%}** against a 33.3% random baseline on three balanced
+**Reported test accuracy: {acc_text}** against a 33.3% random baseline on three balanced
 classes.
 
 **But treat it as optimistic, not as a clean held-out estimate.** This checkpoint comes from
@@ -98,9 +119,9 @@ def main() -> None:
     st.title("🍽️ Food Calorie Classifier")
     st.caption("Nutrition5k · ordinal multi-task CNN · AI4ALL")
 
-    classifier = load_model()
+    classifier, load_error = load_model()
     if classifier is None:
-        render_missing_weights()
+        render_missing_weights(load_error)
         st.stop()
 
     render_honest_caveats(classifier.metadata)

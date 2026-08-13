@@ -73,7 +73,7 @@ common clean test)`:
 
 | arch / split | val acc | true test | **inflation** | positive in |
 |---|---|---|---|---|
-| small / **leaky** | 0.774 | 0.731 | **+3.3 pt** | **5/5 seeds** |
+| small / **leaky** | 0.774 | 0.731 | **+4.3 pt** | **5/5 seeds** |
 | small / clean | 0.741 | 0.747 | −0.6 pt | 1/5 |
 | big / **leaky** | 0.737 | 0.713 | **+2.4 pt** | **5/5 seeds** |
 | big / clean | 0.705 | 0.714 | −1.0 pt | 1/5 |
@@ -94,7 +94,7 @@ right the first time would be its own dishonesty.
 
 I hypothesized the **big** flatten→FC model would inflate **more** — that leakage is about
 high-capacity memorization. **The data refutes it.** The small model inflated slightly *more*
-(+3.3 vs +2.4), and both were unanimous. The inflation doesn't come from a model memorizing
+(+4.3 vs +2.4), and both were unanimous. The inflation doesn't come from a model memorizing
 sessions; it comes from the **validation set itself being contaminated** — it contains
 session-mates of training dishes, so any model that learns session-correlated features (even
 legitimately) scores higher on it. That makes the finding *stronger*, not weaker: it's
@@ -126,8 +126,11 @@ augmentation happened to cover the leak.
   5 seeds and 2 architectures.** The group's 74.1% is such a number; true is ~71%.
 - The effect is architecture-independent — my capacity hypothesis was wrong, and I said so.
 
-Raw numbers: `reports/leakage_rigorous.json` (20 cells) and `reports/leakage_seed*.json` (the
-first, confounded experiment, kept for the record).
+Raw numbers: `reports/leakage_rigorous_20cell_2seed-arch.json` (the 20-cell run tabled above) and
+`reports/leakage_seed*.json` (the first, confounded experiment, kept for the record). Note:
+`reports/leakage_rigorous.json` now holds a later 30-cell three-arm rerun (adds an official-split
+arm, run on different hardware — leaky +2.2 pt, positive in 9/10; same conclusion, magnitudes are
+hardware-specific — see [the write-up](docs/session-leakage-nutrition5k.md)).
 
 ## Evaluation (the Week 12 deliverables)
 
@@ -198,8 +201,8 @@ python experiments/leakage_rigorous.py --data-root ~/Downloads/archive
 python experiments/leakage.py --data-root ~/Downloads/archive --epochs 15
 ```
 
-First run builds a preprocessed image cache (uint8, ~45s). `reports/leakage_rigorous.json` holds
-the airtight numbers; each run prints its comparison table.
+First run builds a preprocessed image cache (uint8, ~45s). `experiments/leakage_rigorous.py`
+writes its results to `reports/leakage_rigorous.json`; each run prints its comparison table.
 
 The test set is **locked**: `src/training/train.py` selects on validation only, and the experiment
 touches test exactly once, at the end. This is a guard against the pattern visible in the group's
